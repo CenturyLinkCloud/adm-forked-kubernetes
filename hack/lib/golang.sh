@@ -50,7 +50,7 @@ readonly KUBE_SERVER_BINARIES=("${KUBE_SERVER_TARGETS[@]##*/}")
 # The server platform we are building on.
 readonly KUBE_SERVER_PLATFORMS=(
   linux/amd64
-  linux/arm
+#  linux/arm
 )
 
 # The set of client targets that we are building for all platforms
@@ -65,10 +65,10 @@ readonly KUBE_CLIENT_BINARIES_WIN=("${KUBE_CLIENT_BINARIES[@]/%/.exe}")
 readonly KUBE_CLIENT_PLATFORMS=(
   linux/amd64
   linux/386
-  linux/arm
+#  linux/arm
   darwin/amd64
-  darwin/386
-  windows/amd64
+#  darwin/386
+#  windows/amd64
   windows/386
 )
 
@@ -113,8 +113,8 @@ readonly KUBE_TEST_PORTABLE=(
 readonly KUBE_TEST_PLATFORMS=(
   linux/amd64
   darwin/amd64
-  windows/amd64
-  linux/arm
+#  windows/amd64
+#  linux/arm
 )
 
 # Gigabytes desired for parallel platform builds. 11 is fairly

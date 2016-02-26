@@ -154,7 +154,9 @@ readonly KUBE_ADDON_PATHS=(
 function kube::build::verify_prereqs() {
   kube::log::status "Verifying Prerequisites...."
   kube::build::ensure_tar || return 1
+
   kube::build::ensure_docker_in_path || return 1
+
   if kube::build::is_osx; then
       kube::build::docker_available_on_osx || return 1
   fi
@@ -192,7 +194,7 @@ function kube::build::prepare_docker_machine() {
   kube::log::status "docker-machine was found."
   docker-machine inspect "${DOCKER_MACHINE_NAME}" >/dev/null || {
     kube::log::status "Creating a machine to build Kubernetes"
-    docker-machine create --driver "${DOCKER_MACHINE_DRIVER}" \
+    docker-machine create --driver "${DOCKER_MACHINE_DRIVER}" --virtualbox-memory 3584 \
       --engine-env HTTP_PROXY="${KUBE_BUILD_HTTP_PROXY:-}" \
       --engine-env HTTPS_PROXY="${KUBE_BUILD_HTTPS_PROXY:-}" \
       --engine-env NO_PROXY="${KUBE_BUILD_NO_PROXY:-127.0.0.1}" \
