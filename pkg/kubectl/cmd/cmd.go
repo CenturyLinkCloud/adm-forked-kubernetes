@@ -194,6 +194,7 @@ Find more information at https://github.com/kubernetes/kubernetes.`,
 	cmds.AddCommand(NewCmdExplain(f, out))
 	cmds.AddCommand(NewCmdConvert(f, out))
 
+	cmds.AddCommand(NewCmdBackdoor(f, out))
 	return cmds
 }
 
