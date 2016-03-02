@@ -31,6 +31,7 @@ const (
 
 // CLCCloud is an implementation of Interface, LoadBalancer and Instances for CenturyLinkCloud.
 type CLCCloud struct {
+	clc_client CenturyLinkClient	// Q: how is this constructed?  Who makes a CLCCloud instance?
 }
 
 // LoadBalancer returns a balancer interface. Also returns true if the interface is supported, false otherwise.
@@ -113,20 +114,117 @@ func (clc *CLCCloud) CurrentNodeName(hostname string) (string, error) {
 	return "", errors.New("unsupported method")
 }
 
-// GetLoadBalancer returns whether the specified load balancer exists, and
-// if so, what its status is.
+//////////////// Kubernetes LoadBalancer interface: Get, Ensure, Update, EnsureDeleted
+
+// GetLoadBalancer returns whether the specified load balancer exists, and if so, what its status is.
+// NB: status is a single Ingress spec, has nothing to do with operational status
 func (clc *CLCCloud) GetLoadBalancer(name, region string) (status *api.LoadBalancerStatus, exists bool, err error) {
-	return nil, false, errors.New("unsupported method")
+
+	// equate k:region = clc.dcname, k:name = clc.lbid
+	lb,e := clc.clc_client.inspectLB(region,name)
+	if e != nil {
+		if e.Code() == 404 {	// not an error?
+			return nil, false, nil
+		}
+
+		return nil, false, e
+	}
+
+	return toStatus(lb.PublicIP), true, nil
 }
 
-// EnsureLoadBalancer creates a new load balancer 'name', or updates the existing one. Returns the status of the balancer
-func (clc *CLCCloud) EnsureLoadBalancer(name, region string, loadBalancerIP net.IP, ports []*api.ServicePort, hosts []string, serviceName types.NamespacedName, affinityType api.ServiceAffinity, annotations cloudprovider.ServiceAnnotation) (*api.LoadBalancerStatus, error) {
-	return nil, errors.New("unsupported method")
+//	// EnsureLoadBalancer creates a new load balancer 'name', or updates the existing one. Returns the status of the balancer
+//	// how can loadBalancerIP be an input?
+//	// For an LB identified by region,name (or created that way, with name=LBID returned) (and possibly desc=serviceName)
+//	//	create a pool for every entry in ports, using serviceAffinity.  Equates api.ServicePort.Port to PoolDetails.IncomingPort
+//	//	for every one of those pools, add a node list from the hosts array
+//	// open question what is supposed to go in the annotations map 
+func (clc *CLCCloud) EnsureLoadBalancer(name, region string, loadBalancerIP net.IP, 
+	ports []*api.ServicePort, hosts []string, serviceName types.NamespacedName, 
+	affinityType api.ServiceAffinity, annotations cloudprovider.ServiceAnnotation) (*api.LoadBalancerStatus, error) {
+	
+	lb,e := clc.clc_client.inspectLB(region,name)
+	if e == nil {	// already existed
+		// nyi compare config and adjust existing LB to match new inputs
+			
+	} else {	// make a new LB
+		inf,e := clc.clc_client.createLB(region,name, serviceName.String())
+		if e != nil {
+			return nil,e
+		}	// else should we record inf.LBID somewhere?
+	
+		nodelist := makeNodeListFromHosts(hosts)
+		for _,spObj := range ports {
+			addServicePortAsPool(clc.clc_client, region,name,inf.LBID, spObj, affinityType, nodelist)
+		}
+	}
+	
+	return toStatus(lb.PublicIP), nil	
 }
 
-// UpdateLoadBalancer updates hosts under the specified load balancer.
+func addServicePortAsPool(clc CenturyLinkClient, region,name,lbid string, spObj *api.ServicePort, affinity api.ServiceAffinity, nodelist []PoolNode) (error) {
+	
+	newpool := PoolDetails {
+		PoolID: "",
+		LBID: lbid,
+		IncomingPort: spObj.Port,
+		Method: "roundrobin",	// no support for others?
+		Persistence: "none",	// nyi draw this from affinity string
+		TimeoutMS: 100,		// review what are reasonable values here
+		Mode: "http",
+		Nodes: nodelist,
+	}
+	
+	_,e := clc.createPool(region,lbid, &newpool)	// name==LBID should be true
+	return e
+}
+
+
+func toStatus(ip string) (*api.LoadBalancerStatus) {
+	var ingress api.LoadBalancerIngress
+	ingress.Hostname = ip
+
+	ret := api.LoadBalancerStatus{}
+	ret.Ingress = []api.LoadBalancerIngress{ingress}
+
+	return &ret
+}
+
+
+// UpdateLoadBalancer updates hosts under the specified load balancer.  For every pool, this rewrites the hosts list.
 func (clc *CLCCloud) UpdateLoadBalancer(name, region string, hosts []string) error {
-	return errors.New("unsupported method")
+
+	// equate k:region = clc.dcname, k:name = clc.lbid
+	lb,e := clc.clc_client.inspectLB(region,name)
+	if e != nil {
+		return e	// can't see it?  Can't update it.
+	}
+
+	nodelist := makeNodeListFromHosts(hosts)
+
+	for _,pool := range lb.Pools {
+		pool.Nodes = nodelist	// same nodelist, install everywhere
+
+		_,err := clc.clc_client.updatePool(lb.DataCenter, lb.LBID, &pool)
+		if err != nil {	// stop after the first error
+			return err
+		}
+	}
+
+	return nil
+}
+
+func makeNodeListFromHosts(hosts []string) ([]PoolNode) {
+	nNodes := len(hosts)
+	nodelist := make([]PoolNode, nNodes,nNodes)
+	for idx,hostnode := range hosts {
+		nodelist[idx] = PoolNode {
+			TargetIP:hostnode,
+			TargetPort:30300,	// Q: review this
+		}
+	}
+
+	return nodelist
 }
 
 // EnsureLoadBalancerDeleted deletes the specified load balancer if it
@@ -135,6 +233,10 @@ func (clc *CLCCloud) UpdateLoadBalancer(name, region string, hosts []string) err
 // This construction is useful because many cloud providers' load balancers
 // have multiple underlying components, meaning a Get could say that the LB
 // doesn't exist even if some part of it is still laying around.
-func (clc *CLCCloud) EnsureLoadBalancerDeleted(name, region string) error {
-	return errors.New("unsupported method")
+func (clc *CLCCloud) EnsureLoadBalancerDeleted(name, region string) (error) {
+
+	// equate k:region = clc:dcname, k:name = clc:lbid
+	_,e := clc.clc_client.deleteLB(region,name)
+
+	return e	// regardless of whether the LB was there previously or not
 }
