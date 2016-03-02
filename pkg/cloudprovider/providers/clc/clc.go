@@ -18,11 +18,7 @@ package clc
 
 import (
 	"errors"
-	"fmt"
-	"io"
 	"net"
-
-	"github.com/scalingdata/gcfg"
 
 	"k8s.io/kubernetes/pkg/api"
 	"k8s.io/kubernetes/pkg/cloudprovider"
@@ -30,54 +26,12 @@ import (
 )
 
 const (
-	// ProviderName clc for CenturyLinkCloud
 	ProviderName = "clc"
 )
 
 // CLCCloud is an implementation of Interface, LoadBalancer and Instances for CenturyLinkCloud.
 type CLCCloud struct {
-	clc_client CenturyLinkClient // Q: how is this constructed?  Who makes a CLCCloud instance?
-}
-
-func init() {
-	cloudprovider.RegisterCloudProvider(ProviderName, func(config io.Reader) (cloudprovider.Interface, error) {
-		cfg, err := readConfig(config)
-		if err != nil {
-			return nil, err
-		}
-		return newCLCCloud(cfg)
-	})
-}
-
-// Config holds CenturyLinkCloud configuration parameters
-type Config struct {
-	Global struct {
-		Username   string `gcfg:"username"`
-		Password   string `gcfg:"password"`
-		Alias      string `gcfg:"alias"`
-		Token      string
-		Datacenter string `gcfg:"datacenter"`
-	}
-	// LoadBalancer LoadBalancerOpts
-}
-
-func readConfig(config io.Reader) (Config, error) {
-	if config == nil {
-		err := fmt.Errorf("no CenturyLinkCloud provider config file given")
-		return Config{}, err
-	}
-
-	var cfg Config
-	err := gcfg.ReadInto(&cfg, config)
-	return cfg, err
-}
-
-func newCLCCloud(cfg Config) (*CLCCloud, error) {
-	clc_client, error := ClientLogin(cfg.Global.Username, cfg.Global.Password)
-	if error != nil {
-		return &CLCCloud{}, error
-	}
-	return &CLCCloud{clc_client}, nil
+	clc_client CenturyLinkClient	// Q: how is this constructed?  Who makes a CLCCloud instance?
 }
 
 // LoadBalancer returns a balancer interface. Also returns true if the interface is supported, false otherwise.
@@ -167,9 +121,9 @@ func (clc *CLCCloud) CurrentNodeName(hostname string) (string, error) {
 func (clc *CLCCloud) GetLoadBalancer(name, region string) (status *api.LoadBalancerStatus, exists bool, err error) {
 
 	// equate k:region = clc.dcname, k:name = clc.lbid
-	lb, e := clc.clc_client.inspectLB(region, name)
+	lb,e := clc.clc_client.inspectLB(region,name)
 	if e != nil {
-		if e.Code() == 404 { // not an error?
+		if e.Code() == 404 {	// not an error?
 			return nil, false, nil
 		}
 
@@ -179,53 +133,54 @@ func (clc *CLCCloud) GetLoadBalancer(name, region string) (status *api.LoadBalan
 	return toStatus(lb.PublicIP), true, nil
 }
 
-//EnsureLoadBalancer creates a new load balancer 'name', or updates the existing one. Returns the status of the balancer
+//	// EnsureLoadBalancer creates a new load balancer 'name', or updates the existing one. Returns the status of the balancer
 //	// how can loadBalancerIP be an input?
 //	// For an LB identified by region,name (or created that way, with name=LBID returned) (and possibly desc=serviceName)
 //	//	create a pool for every entry in ports, using serviceAffinity.  Equates api.ServicePort.Port to PoolDetails.IncomingPort
 //	//	for every one of those pools, add a node list from the hosts array
-//	// open question what is supposed to go in the annotations map
-func (clc *CLCCloud) EnsureLoadBalancer(name, region string, loadBalancerIP net.IP,
-	ports []*api.ServicePort, hosts []string, serviceName types.NamespacedName,
+//	// open question what is supposed to go in the annotations map 
+func (clc *CLCCloud) EnsureLoadBalancer(name, region string, loadBalancerIP net.IP, 
+	ports []*api.ServicePort, hosts []string, serviceName types.NamespacedName, 
 	affinityType api.ServiceAffinity, annotations cloudprovider.ServiceAnnotation) (*api.LoadBalancerStatus, error) {
-
-	lb, e := clc.clc_client.inspectLB(region, name)
-	if e == nil { // already existed
+	
+	lb,e := clc.clc_client.inspectLB(region,name)
+	if e == nil {	// already existed
 		// nyi compare config and adjust existing LB to match new inputs
-
-	} else { // make a new LB
-		inf, e := clc.clc_client.createLB(region, name, serviceName.String())
+			
+	} else {	// make a new LB
+		inf,e := clc.clc_client.createLB(region,name, serviceName.String())
 		if e != nil {
-			return nil, e
-		} // else should we record inf.LBID somewhere?
-
+			return nil,e
+		}	// else should we record inf.LBID somewhere?
+	
 		nodelist := makeNodeListFromHosts(hosts)
-		for _, spObj := range ports {
-			addServicePortAsPool(clc.clc_client, region, name, inf.LBID, spObj, affinityType, nodelist)
+		for _,spObj := range ports {
+			addServicePortAsPool(clc.clc_client, region,name,inf.LBID, spObj, affinityType, nodelist)
 		}
 	}
-
-	return toStatus(lb.PublicIP), nil
+	
+	return toStatus(lb.PublicIP), nil	
 }
 
-func addServicePortAsPool(clc CenturyLinkClient, region, name, lbid string, spObj *api.ServicePort, affinity api.ServiceAffinity, nodelist []PoolNode) error {
-
-	newpool := PoolDetails{
-		PoolID:       "",
-		LBID:         lbid,
+func addServicePortAsPool(clc CenturyLinkClient, region,name,lbid string, spObj *api.ServicePort, affinity api.ServiceAffinity, nodelist []PoolNode) (error) {
+	
+	newpool := PoolDetails {
+		PoolID: "",
+		LBID: lbid,
 		IncomingPort: spObj.Port,
-		Method:       "roundrobin", // no support for others?
-		Persistence:  "none",       // nyi draw this from affinity string
-		TimeoutMS:    100,          // review what are reasonable values here
-		Mode:         "http",
-		Nodes:        nodelist,
+		Method: "roundrobin",	// no support for others?
+		Persistence: "none",	// nyi draw this from affinity string
+		TimeoutMS: 100,		// review what are reasonable values here
+		Mode: "http",
+		Nodes: nodelist,
 	}
-
-	_, e := clc.createPool(region, lbid, &newpool) // name==LBID should be true
+	
+	_,e := clc.createPool(region,lbid, &newpool)	// name==LBID should be true
 	return e
 }
 
-func toStatus(ip string) *api.LoadBalancerStatus {
+
+func toStatus(ip string) (*api.LoadBalancerStatus) {
 	var ingress api.LoadBalancerIngress
 	ingress.Hostname = ip
 
@@ -235,22 +190,23 @@ func toStatus(ip string) *api.LoadBalancerStatus {
 	return &ret
 }
 
+
 // UpdateLoadBalancer updates hosts under the specified load balancer.  For every pool, this rewrites the hosts list.
 func (clc *CLCCloud) UpdateLoadBalancer(name, region string, hosts []string) error {
 
 	// equate k:region = clc.dcname, k:name = clc.lbid
-	lb, e := clc.clc_client.inspectLB(region, name)
+	lb,e := clc.clc_client.inspectLB(region,name)
 	if e != nil {
-		return e // can't see it?  Can't update it.
+		return e	// can't see it?  Can't update it.
 	}
 
 	nodelist := makeNodeListFromHosts(hosts)
 
-	for _, pool := range lb.Pools {
-		pool.Nodes = nodelist // same nodelist, install everywhere
+	for _,pool := range lb.Pools {
+		pool.Nodes = nodelist	// same nodelist, install everywhere
 
-		_, err := clc.clc_client.updatePool(lb.DataCenter, lb.LBID, &pool)
-		if err != nil { // stop after the first error
+		_,err := clc.clc_client.updatePool(lb.DataCenter, lb.LBID, &pool)
+		if err != nil {	// stop after the first error
 			return err
 		}
 	}
@@ -258,13 +214,13 @@ func (clc *CLCCloud) UpdateLoadBalancer(name, region string, hosts []string) err
 	return nil
 }
 
-func makeNodeListFromHosts(hosts []string) []PoolNode {
+func makeNodeListFromHosts(hosts []string) ([]PoolNode) {
 	nNodes := len(hosts)
-	nodelist := make([]PoolNode, nNodes, nNodes)
-	for idx, hostnode := range hosts {
-		nodelist[idx] = PoolNode{
-			TargetIP:   hostnode,
-			TargetPort: 30300, // Q: review this
+	nodelist := make([]PoolNode, nNodes,nNodes)
+	for idx,hostnode := range hosts {
+		nodelist[idx] = PoolNode {
+			TargetIP:hostnode,
+			TargetPort:30300,	// Q: review this
 		}
 	}
 
@@ -277,10 +233,10 @@ func makeNodeListFromHosts(hosts []string) []PoolNode {
 // This construction is useful because many cloud providers' load balancers
 // have multiple underlying components, meaning a Get could say that the LB
 // doesn't exist even if some part of it is still laying around.
-func (clc *CLCCloud) EnsureLoadBalancerDeleted(name, region string) error {
+func (clc *CLCCloud) EnsureLoadBalancerDeleted(name, region string) (error) {
 
 	// equate k:region = clc:dcname, k:name = clc:lbid
-	_, e := clc.clc_client.deleteLB(region, name)
+	_,e := clc.clc_client.deleteLB(region,name)
 
-	return e // regardless of whether the LB was there previously or not
+	return e	// regardless of whether the LB was there previously or not
 }
