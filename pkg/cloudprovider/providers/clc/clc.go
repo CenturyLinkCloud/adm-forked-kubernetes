@@ -26,7 +26,6 @@ import (
 
 	"k8s.io/kubernetes/pkg/api"
 	"k8s.io/kubernetes/pkg/cloudprovider"
-	"k8s.io/kubernetes/pkg/cloudprovider/providers/clc"
 	"k8s.io/kubernetes/pkg/types"
 )
 
@@ -74,7 +73,7 @@ func readConfig(config io.Reader) (Config, error) {
 }
 
 func newCLCCloud(cfg Config) (*CLCCloud, error) {
-	clc_client, error = clc.ClientLogin(Config.Global.Username, Config.Global.Password)
+	clc_client, error := ClientLogin(cfg.Global.Username, cfg.Global.Password)
 	if error != nil {
 		return &CLCCloud{}, error
 	}
