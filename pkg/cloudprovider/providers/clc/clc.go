@@ -36,7 +36,7 @@ const (
 
 // CLCCloud is an implementation of Interface, LoadBalancer and Instances for CenturyLinkCloud.
 type CLCCloud struct {
-	clc_client CenturyLinkClient // Q: how is this constructed?  Who makes a CLCCloud instance?
+	clcClient CenturyLinkClient // Q: how is this constructed?  Who makes a CLCCloud instance?
 }
 
 func init() {
@@ -73,11 +73,11 @@ func readConfig(config io.Reader) (Config, error) {
 }
 
 func newCLCCloud(cfg Config) (*CLCCloud, error) {
-	clc_client, error := ClientLogin(cfg.Global.Username, cfg.Global.Password)
+	clcClient, error := ClientLogin(cfg.Global.Username, cfg.Global.Password)
 	if error != nil {
 		return &CLCCloud{}, error
 	}
-	return &CLCCloud{clc_client}, nil
+	return &CLCCloud{clcClient}, nil
 }
 
 // LoadBalancer returns a balancer interface. Also returns true if the interface is supported, false otherwise.
