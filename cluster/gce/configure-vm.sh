@@ -140,15 +140,32 @@ function remove-docker-artifacts() {
   echo "== Finished deleting docker0 =="
 }
 
-# Retry a download until we get it.
+# Retry a download until we get it. Takes a hash and a set of URLs.
 #
-# $1 is the URL to download
+# $1 is the sha1 of the URL. Can be "" if the sha1 is unknown.
+# $2+ are the URLs to download.
 download-or-bust() {
-  local -r url="$1"
-  local -r file="${url##*/}"
-  rm -f "$file"
-  until curl --ipv4 -Lo "$file" --connect-timeout 20 --retry 6 --retry-delay 10 "${url}"; do
-    echo "Failed to download file (${url}). Retrying."
+  local -r hash="$1"
+  shift 1
+
+  urls=( $* )
+  while true; do
+    for url in "${urls[@]}"; do
+      local file="${url##*/}"
+      rm -f "${file}"
+      if ! curl -f --ipv4 -Lo "${file}" --connect-timeout 20 --retry 6 --retry-delay 10 "${url}"; then
+        echo "== Failed to download ${url}. Retrying. =="
+      elif [[ -n "${hash}" ]] && ! validate-hash "${file}" "${hash}"; then
+        echo "== Hash validation of ${url} failed. Retrying. =="
+      else
+        if [[ -n "${hash}" ]]; then
+          echo "== Downloaded ${url} (SHA1 = ${hash}) =="
+        else
+          echo "== Downloaded ${url} =="
+        fi
+        return
+      fi
+    done
   done
 }
 
@@ -165,6 +182,21 @@ validate-hash() {
 }
 
 apt-get-install() {
+  local -r packages=( $@ )
+  installed=true
+  for package in "${packages[@]}"; do
+    if ! dpkg -s "${package}" &>/dev/null; then
+      installed=false
+      break
+    fi
+  done
+  if [[ "${installed}" == "true" ]]; then
+    echo "== ${packages[@]} already installed, skipped apt-get install ${packages[@]} =="
+    return
+  fi
+
+  apt-get-update
+
   # Forcibly install packages (options borrowed from Salt logs).
   until apt-get -q -y -o DPkg::Options::=--force-confold -o DPkg::Options::=--force-confdef install $@; do
     echo "== install of packages $@ failed, retrying =="
@@ -176,8 +208,59 @@ apt-get-update() {
   echo "== Refreshing package database =="
   until apt-get update; do
     echo "== apt-get update failed, retrying =="
-    echo sleep 5
+    sleep 5
   done
+}
+
+# Restart any services that need restarting due to a library upgrade
+# Uses needrestart
+restart-updated-services() {
+  # We default to restarting services, because this is only done as part of an update
+  if [[ "${AUTO_RESTART_SERVICES:-true}" != "true" ]]; then
+    echo "Auto restart of services prevented by AUTO_RESTART_SERVICES=${AUTO_RESTART_SERVICES}"
+    return
+  fi
+  echo "Restarting services with updated libraries (needrestart -r a)"
+  # The pipes make sure that needrestart doesn't think it is running with a TTY
+  # Debian bug #803249; fixed but not necessarily in package repos yet
+  echo "" | needrestart -r a 2>&1 | tee /dev/null
+}
+
+# Reboot the machine if /var/run/reboot-required exists
+reboot-if-required() {
+  if [[ ! -e "/var/run/reboot-required" ]]; then
+    return
+  fi
+
+  echo "Reboot is required (/var/run/reboot-required detected)"
+  if [[ -e "/var/run/reboot-required.pkgs" ]]; then
+    echo "Packages that triggered reboot:"
+    cat /var/run/reboot-required.pkgs
+  fi
+
+  # We default to rebooting the machine because this is only done as part of an update
+  if [[ "${AUTO_REBOOT:-true}" != "true" ]]; then
+    echo "Reboot prevented by AUTO_REBOOT=${AUTO_REBOOT}"
+    return
+  fi
+
+  rm -f /var/run/reboot-required
+  rm -f /var/run/reboot-required.pkgs
+  echo "Triggering reboot"
+  init 6
+}
+
+# Install upgrades using unattended-upgrades, then reboot or restart services
+auto-upgrade() {
+  # We default to not installing upgrades
+  if [[ "${AUTO_UPGRADE:-false}" != "true" ]]; then
+    echo "AUTO_UPGRADE not set to true; won't auto-upgrade"
+    return
+  fi
+  apt-get-install unattended-upgrades needrestart
+  unattended-upgrade --debug
+  reboot-if-required # We may reboot the machine right here
+  restart-updated-services
 }
 
 #
@@ -208,7 +291,7 @@ install-salt() {
 
   for deb in "${DEBS[@]}"; do
     if [ ! -e "${deb}" ]; then
-      download-or-bust "${URL_BASE}/${deb}"
+      download-or-bust "" "${URL_BASE}/${deb}"
     fi
   done
 
@@ -588,39 +671,43 @@ EOF
   fi
 }
 
+function split-commas() {
+  echo $1 | tr "," "\n"
+}
+
 function try-download-release() {
   # TODO(zmerlynn): Now we REALLy have no excuse not to do the reboot
   # optimization.
 
-  # TODO(zmerlynn): This may not be set yet by everyone (GKE).
-  if [[ -z "${SERVER_BINARY_TAR_HASH:-}" ]]; then
+  local -r server_binary_tar_urls=( $(split-commas "${SERVER_BINARY_TAR_URL}") )
+  local -r server_binary_tar="${server_binary_tar_urls[0]##*/}"
+  if [[ -n "${SERVER_BINARY_TAR_HASH:-}" ]]; then
+    local -r server_binary_tar_hash="${SERVER_BINARY_TAR_HASH}"
+  else
     echo "Downloading binary release sha1 (not found in env)"
-    download-or-bust "${SERVER_BINARY_TAR_URL}.sha1"
-    SERVER_BINARY_TAR_HASH=$(cat "${SERVER_BINARY_TAR_URL##*/}.sha1")
+    download-or-bust "" "${server_binary_tar_urls[@]/.tar.gz/.tar.gz.sha1}"
+    local -r server_binary_tar_hash=$(cat "${server_binary_tar}.sha1")
   fi
 
-  echo "Downloading binary release tar (${SERVER_BINARY_TAR_URL})"
-  download-or-bust "${SERVER_BINARY_TAR_URL}"
+  echo "Downloading binary release tar (${server_binary_tar_urls[@]})"
+  download-or-bust "${server_binary_tar_hash}" "${server_binary_tar_urls[@]}"
 
-  validate-hash "${SERVER_BINARY_TAR_URL##*/}" "${SERVER_BINARY_TAR_HASH}"
-  echo "Validated ${SERVER_BINARY_TAR_URL} SHA1 = ${SERVER_BINARY_TAR_HASH}"
-
-  # TODO(zmerlynn): This may not be set yet by everyone (GKE).
-  if [[ -z "${SALT_TAR_HASH:-}" ]]; then
+  local -r salt_tar_urls=( $(split-commas "${SALT_TAR_URL}") )
+  local -r salt_tar="${salt_tar_urls[0]##*/}"
+  if [[ -n "${SALT_TAR_HASH:-}" ]]; then
+    local -r salt_tar_hash="${SALT_TAR_HASH}"
+  else
     echo "Downloading Salt tar sha1 (not found in env)"
-    download-or-bust "${SALT_TAR_URL}.sha1"
-    SALT_TAR_HASH=$(cat "${SALT_TAR_URL##*/}.sha1")
+    download-or-bust "" "${salt_tar_urls[@]/.tar.gz/.tar.gz.sha1}"
+    local -r salt_tar_hash=$(cat "${salt_tar}.sha1")
   fi
 
-  echo "Downloading Salt tar ($SALT_TAR_URL)"
-  download-or-bust "$SALT_TAR_URL"
-
-  validate-hash "${SALT_TAR_URL##*/}" "${SALT_TAR_HASH}"
-  echo "Validated ${SALT_TAR_URL} SHA1 = ${SALT_TAR_HASH}"
+  echo "Downloading Salt tar (${salt_tar_urls[@]})"
+  download-or-bust "${salt_tar_hash}" "${salt_tar_urls[@]}"
 
   echo "Unpacking Salt tree and checking integrity of binary release tar"
   rm -rf kubernetes
-  tar xzf "${SALT_TAR_URL##*/}" && tar tzf "${SERVER_BINARY_TAR_URL##*/}" > /dev/null
+  tar xzf "${salt_tar}" && tar tzf "${server_binary_tar}" > /dev/null
 }
 
 function download-release() {
@@ -795,10 +882,10 @@ if [[ -z "${is_push}" ]]; then
   set-broken-motd
   ensure-basic-networking
   fix-apt-sources
-  apt-get-update
   ensure-install-dir
   ensure-packages
   set-kube-env
+  auto-upgrade
   ensure-local-disks
   [[ "${KUBERNETES_MASTER}" == "true" ]] && mount-master-pd
   create-salt-pillar

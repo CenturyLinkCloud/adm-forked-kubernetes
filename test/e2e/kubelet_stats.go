@@ -32,6 +32,7 @@ import (
 	cadvisorapi "github.com/google/cadvisor/info/v1"
 	"github.com/prometheus/common/model"
 	"k8s.io/kubernetes/pkg/api"
+	"k8s.io/kubernetes/pkg/client/restclient"
 	client "k8s.io/kubernetes/pkg/client/unversioned"
 	"k8s.io/kubernetes/pkg/kubelet/metrics"
 	"k8s.io/kubernetes/pkg/kubelet/server/stats"
@@ -337,12 +338,12 @@ type usageDataPerContainer struct {
 }
 
 // Performs a get on a node proxy endpoint given the nodename and rest client.
-func nodeProxyRequest(c *client.Client, node, endpoint string) (client.Result, error) {
+func nodeProxyRequest(c *client.Client, node, endpoint string) (restclient.Result, error) {
 	subResourceProxyAvailable, err := serverVersionGTE(subResourceServiceAndNodeProxyVersion, c)
 	if err != nil {
-		return client.Result{}, err
+		return restclient.Result{}, err
 	}
-	var result client.Result
+	var result restclient.Result
 	if subResourceProxyAvailable {
 		result = c.Get().
 			Resource("nodes").
@@ -585,7 +586,7 @@ func (r *resourceMonitor) LogLatest() {
 	if err != nil {
 		Logf("%v", err)
 	}
-	r.FormatResourceUsage(summary)
+	Logf(r.FormatResourceUsage(summary))
 }
 
 func (r *resourceMonitor) FormatResourceUsage(s resourceUsagePerNode) string {

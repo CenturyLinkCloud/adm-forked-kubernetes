@@ -26,6 +26,8 @@ import (
 	"time"
 
 	"k8s.io/kubernetes/pkg/api"
+	"k8s.io/kubernetes/pkg/api/unversioned"
+	"k8s.io/kubernetes/pkg/client/restclient"
 	client "k8s.io/kubernetes/pkg/client/unversioned"
 	"k8s.io/kubernetes/pkg/kubelet/api/v1alpha1/stats"
 
@@ -38,7 +40,7 @@ var _ = Describe("Kubelet", func() {
 	var cl *client.Client
 	BeforeEach(func() {
 		// Setup the apiserver client
-		cl = client.NewOrDie(&client.Config{Host: *apiServerAddress})
+		cl = client.NewOrDie(&restclient.Config{Host: *apiServerAddress})
 	})
 
 	Describe("pod scheduling", func() {
@@ -69,7 +71,8 @@ var _ = Describe("Kubelet", func() {
 
 			It("it should print the output to logs", func() {
 				Eventually(func() string {
-					rc, err := cl.Pods(api.NamespaceDefault).GetLogs("busybox", &api.PodLogOptions{}).Stream()
+					sinceTime := unversioned.NewTime(time.Now().Add(time.Duration(-1 * time.Hour)))
+					rc, err := cl.Pods(api.NamespaceDefault).GetLogs("busybox", &api.PodLogOptions{SinceTime: &sinceTime}).Stream()
 					if err != nil {
 						return ""
 					}
@@ -86,53 +89,53 @@ var _ = Describe("Kubelet", func() {
 			})
 		})
 
-		// TODO: Enable this when issues are resolved.  Tracked in #21320
-		//		Context("when scheduling a read only busybox container", func() {
-		//			It("it should return success", func() {
-		//				pod := &api.Pod{
-		//					ObjectMeta: api.ObjectMeta{
-		//						Name:      "busybox",
-		//						Namespace: api.NamespaceDefault,
-		//					},
-		//					Spec: api.PodSpec{
-		//						// Force the Pod to schedule to the node without a scheduler running
-		//						NodeName: *nodeName,
-		//						// Don't restart the Pod since it is expected to exit
-		//						RestartPolicy: api.RestartPolicyNever,
-		//						Containers: []api.Container{
-		//							{
-		//								Image:   "gcr.io/google_containers/busybox",
-		//								Name:    "busybox",
-		//								Command: []string{"sh", "-c", "echo test > /file"},
-		//								SecurityContext: &api.SecurityContext{
-		//									ReadOnlyRootFilesystem: &isReadOnly,
-		//								},
-		//							},
-		//						},
-		//					},
-		//				}
-		//				_, err := cl.Pods(api.NamespaceDefault).Create(pod)
-		//				Expect(err).To(BeNil(), fmt.Sprintf("Error creating Pod %v", err))
-		//			})
-		//
-		//			It("it should not write to the root filesystem", func() {
-		//				Eventually(func() string {
-		//					rc, err := cl.Pods(api.NamespaceDefault).GetLogs("busybox", &api.PodLogOptions{}).Stream()
-		//					if err != nil {
-		//						return ""
-		//					}
-		//					defer rc.Close()
-		//					buf := new(bytes.Buffer)
-		//					buf.ReadFrom(rc)
-		//					return buf.String()
-		//				}, time.Second*30, time.Second*4).Should(Equal("sh: can't create /file: Read-only file system"))
-		//			})
-		//
-		//			It("it should be possible to delete", func() {
-		//				err := cl.Pods(api.NamespaceDefault).Delete("busybox", &api.DeleteOptions{})
-		//				Expect(err).To(BeNil(), fmt.Sprintf("Error creating Pod %v", err))
-		//			})
-		//		})
+		Context("when scheduling a read only busybox container", func() {
+			It("it should return success", func() {
+				isReadOnly := true
+				pod := &api.Pod{
+					ObjectMeta: api.ObjectMeta{
+						Name:      "busybox",
+						Namespace: api.NamespaceDefault,
+					},
+					Spec: api.PodSpec{
+						// Force the Pod to schedule to the node without a scheduler running
+						NodeName: *nodeName,
+						// Don't restart the Pod since it is expected to exit
+						RestartPolicy: api.RestartPolicyNever,
+						Containers: []api.Container{
+							{
+								Image:   "gcr.io/google_containers/busybox",
+								Name:    "busybox",
+								Command: []string{"sh", "-c", "echo test > /file"},
+								SecurityContext: &api.SecurityContext{
+									ReadOnlyRootFilesystem: &isReadOnly,
+								},
+							},
+						},
+					},
+				}
+				_, err := cl.Pods(api.NamespaceDefault).Create(pod)
+				Expect(err).To(BeNil(), fmt.Sprintf("Error creating Pod %v", err))
+			})
+
+			It("it should not write to the root filesystem", func() {
+				Eventually(func() string {
+					rc, err := cl.Pods(api.NamespaceDefault).GetLogs("busybox", &api.PodLogOptions{}).Stream()
+					if err != nil {
+						return ""
+					}
+					defer rc.Close()
+					buf := new(bytes.Buffer)
+					buf.ReadFrom(rc)
+					return buf.String()
+				}, time.Second*30, time.Second*4).Should(Equal("sh: can't create /file: Read-only file system\n"))
+			})
+
+			It("it should be possible to delete", func() {
+				err := cl.Pods(api.NamespaceDefault).Delete("busybox", &api.DeleteOptions{})
+				Expect(err).To(BeNil(), fmt.Sprintf("Error creating Pod %v", err))
+			})
+		})
 	})
 
 	Describe("metrics api", func() {
@@ -195,15 +198,16 @@ var _ = Describe("Kubelet", func() {
 				Expect(summary.Node.Fs.UsedBytes).NotTo(BeNil())
 				Expect(*summary.Node.Fs.UsedBytes).NotTo(BeZero())
 
-				By("Having resources for kubelet and runtime system containers")
-				sysContainers := map[string]stats.ContainerStats{}
-				sysContainersList := []string{}
-				for _, container := range summary.Node.SystemContainers {
-					sysContainers[container.Name] = container
-					sysContainersList = append(sysContainersList, container.Name)
-					ExpectContainerStatsNotEmpty(&container)
-				}
-				Expect(sysContainersList).To(ConsistOf("kubelet", "runtime"))
+				// TODO: Enable this test when #22198 is resolved.
+				//				By("Having resources for kubelet and runtime system containers")
+				//				sysContainers := map[string]stats.ContainerStats{}
+				//				sysContainersList := []string{}
+				//				for _, container := range summary.Node.SystemContainers {
+				//					sysContainers[container.Name] = container
+				//					sysContainersList = append(sysContainersList, container.Name)
+				//					ExpectContainerStatsNotEmpty(&container)
+				//				}
+				//				Expect(sysContainersList).To(ConsistOf("kubelet", "runtime"))
 
 				// Verify Pods Stats are present
 				podsList := []string{}

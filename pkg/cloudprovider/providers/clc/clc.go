@@ -18,7 +18,11 @@ package clc
 
 import (
 	"errors"
+	"fmt"
+	"io"
 	"net"
+
+	"github.com/scalingdata/gcfg"
 
 	"k8s.io/kubernetes/pkg/api"
 	"k8s.io/kubernetes/pkg/cloudprovider"
@@ -26,12 +30,54 @@ import (
 )
 
 const (
+	// ProviderName clc for CenturyLinkCloud
 	ProviderName = "clc"
 )
 
 // CLCCloud is an implementation of Interface, LoadBalancer and Instances for CenturyLinkCloud.
 type CLCCloud struct {
-	clcClient CenturyLinkClient	// Q: how is this constructed?  Who makes a CLCCloud instance?
+	clc_client CenturyLinkClient // Q: how is this constructed?  Who makes a CLCCloud instance?
+}
+
+func init() {
+	cloudprovider.RegisterCloudProvider(ProviderName, func(config io.Reader) (cloudprovider.Interface, error) {
+		cfg, err := readConfig(config)
+		if err != nil {
+			return nil, err
+		}
+		return newCLCCloud(cfg)
+	})
+}
+
+// Config holds CenturyLinkCloud configuration parameters
+type Config struct {
+	Global struct {
+		Username   string `gcfg:"username"`
+		Password   string `gcfg:"password"`
+		Alias      string `gcfg:"alias"`
+		Token      string
+		Datacenter string `gcfg:"datacenter"`
+	}
+	// LoadBalancer LoadBalancerOpts
+}
+
+func readConfig(config io.Reader) (Config, error) {
+	if config == nil {
+		err := fmt.Errorf("no CenturyLinkCloud provider config file given")
+		return Config{}, err
+	}
+
+	var cfg Config
+	err := gcfg.ReadInto(&cfg, config)
+	return cfg, err
+}
+
+func newCLCCloud(cfg Config) (*CLCCloud, error) {
+	clc_client, error := ClientLogin(cfg.Global.Username, cfg.Global.Password)
+	if error != nil {
+		return &CLCCloud{}, error
+	}
+	return &CLCCloud{clc_client}, nil
 }
 
 // LoadBalancer returns a balancer interface. Also returns true if the interface is supported, false otherwise.
@@ -145,6 +191,7 @@ func (clc *CLCCloud) GetLoadBalancer(name, region string) (status *api.LoadBalan
 		return nil, false, e
 	}
 }
+
 
 // EnsureLoadBalancer creates a new load balancer 'name', or updates the existing one. Returns the status of the balancer
 // For an LB identified by region,name (or created that way, with name=LBID returned) (and possibly desc=serviceName)
@@ -278,8 +325,7 @@ func conformPoolDetails(clcClient *CenturyLinkClient, dc string, desiredPool, ex
 	return true,e
 }
 
-
-func toStatus(ip string) (*api.LoadBalancerStatus) {
+func toStatus(ip string) *api.LoadBalancerStatus {
 	var ingress api.LoadBalancerIngress
 	ingress.Hostname = ip
 
@@ -289,14 +335,13 @@ func toStatus(ip string) (*api.LoadBalancerStatus) {
 	return &ret
 }
 
-
 // UpdateLoadBalancer updates hosts under the specified load balancer.  For every pool, this rewrites the hosts list.
 // We require that every pool must have a nonempty nodes list, deleting pools if necessary to enforce this.
 func (clc *CLCCloud) UpdateLoadBalancer(name, region string, hosts []string) error {
 
 	lb,e := findLoadBalancerInstance(clc.clcClient, name,region)
 	if e != nil {
-		return e	// can't see it?  Can't update it.
+		return e // can't see it?  Can't update it.
 	}
 
 	for _,pool := range lb.Pools {
@@ -331,6 +376,7 @@ func (clc *CLCCloud) UpdateLoadBalancer(name, region string, hosts []string) err
 	return nil
 }
 
+
 func makeNodeListFromHosts(hosts []string, portnum int) ([]PoolNode) {
 	nNodes := len(hosts)
 	nodelist := make([]PoolNode, nNodes,nNodes)
@@ -350,14 +396,14 @@ func makeNodeListFromHosts(hosts []string, portnum int) ([]PoolNode) {
 // This construction is useful because many cloud providers' load balancers
 // have multiple underlying components, meaning a Get could say that the LB
 // doesn't exist even if some part of it is still laying around.
-func (clc *CLCCloud) EnsureLoadBalancerDeleted(name, region string) (error) {
+func (clc *CLCCloud) EnsureLoadBalancerDeleted(name, region string) error {
 
 	lb,e := findLoadBalancerInstance(clc.clcClient, name,region)
 	if e == nil {
 		_,e = clc.clcClient.deleteLB(lb.DataCenter, lb.LBID)
 	}
 
-	return e	// regardless of whether the LB was there previously or not
+	return e // regardless of whether the LB was there previously or not
 }
 
 //////////////// Notes about mapping the Kubernetes data model to the CLC LBAAS 

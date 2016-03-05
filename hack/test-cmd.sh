@@ -70,9 +70,9 @@ function start-proxy()
   # We try checking kubectl proxy 30 times with 1s delays to avoid occasional
   # failures.
   if [ $# -eq 0 ]; then
-    kube::util::wait_for_url "http://127.0.0.1:${PROXY_PORT}/healthz" "kubectl proxy" 1 30
+    kube::util::wait_for_url "http://127.0.0.1:${PROXY_PORT}/healthz" "kubectl proxy"
   else
-    kube::util::wait_for_url "http://127.0.0.1:${PROXY_PORT}/$1/healthz" "kubectl proxy --api-prefix=$1" 1 30
+    kube::util::wait_for_url "http://127.0.0.1:${PROXY_PORT}/$1/healthz" "kubectl proxy --api-prefix=$1"
   fi
 }
 
@@ -209,6 +209,20 @@ PATH="${KUBE_OUTPUT_HOSTBIN}":$PATH
 kube::log::status "Checking kubectl version"
 kubectl version
 
+# TODO: we need to note down the current default namespace and set back to this
+# namespace after the tests are done.
+kubectl config view
+CONTEXT="test"
+kubectl config set-context "${CONTEXT}"
+kubectl config use-context "${CONTEXT}"
+
+i=0
+create_and_use_new_namespace() {
+  i=$(($i+1))
+  kubectl create namespace "namespace${i}"
+  kubectl config set-context "${CONTEXT}" --namespace="namespace${i}"
+}
+
 runTests() {
   version="$1"
   echo "Testing api version: $1"
@@ -311,6 +325,7 @@ runTests() {
 
   ### Create POD valid-pod from JSON
   # Pre-condition: no POD exists
+  create_and_use_new_namespace
   kube::test::get_object_assert pods "{{range.items}}{{$id_field}}:{{end}}" ''
   # Command
   kubectl create "${kube_flags[@]}" -f docs/admin/limitrange/valid-pod.yaml
@@ -346,9 +361,10 @@ runTests() {
 
   ### Create POD valid-pod from dumped YAML
   # Pre-condition: no POD exists
+  create_and_use_new_namespace
   kube::test::get_object_assert pods "{{range.items}}{{$id_field}}:{{end}}" ''
   # Command
-  echo "${output_pod}" | kubectl create -f - "${kube_flags[@]}"
+  echo "${output_pod}" | sed '/namespace:/d' | kubectl create -f - "${kube_flags[@]}"
   # Post-condition: valid-pod POD is created
   kube::test::get_object_assert pods "{{range.items}}{{$id_field}}:{{end}}" 'valid-pod:'
 
@@ -360,8 +376,9 @@ runTests() {
   # Post-condition: valid-pod POD doesn't exist
   kube::test::get_object_assert pods "{{range.items}}{{$id_field}}:{{end}}" ''
 
-  ### Create POD redis-master from JSON
+  ### Create POD valid-pod from JSON
   # Pre-condition: no POD exists
+  create_and_use_new_namespace
   kube::test::get_object_assert pods "{{range.items}}{{$id_field}}:{{end}}" ''
   # Command
   kubectl create -f docs/admin/limitrange/valid-pod.yaml "${kube_flags[@]}"
@@ -376,8 +393,9 @@ runTests() {
   # Post-condition: valid-pod POD doesn't exist
   kube::test::get_object_assert "pods -l'name in (valid-pod)'" '{{range.items}}{{$id_field}}:{{end}}' ''
 
-  ### Create POD valid-pod from JSON
+  ### Create POD valid-pod from YAML
   # Pre-condition: no POD exists
+  create_and_use_new_namespace
   kube::test::get_object_assert pods "{{range.items}}{{$id_field}}:{{end}}" ''
   # Command
   kubectl create -f docs/admin/limitrange/valid-pod.yaml "${kube_flags[@]}"
@@ -410,6 +428,7 @@ runTests() {
 
   ### Create two PODs
   # Pre-condition: no POD exists
+  create_and_use_new_namespace
   kube::test::get_object_assert pods "{{range.items}}{{$id_field}}:{{end}}" ''
   # Command
   kubectl create -f docs/admin/limitrange/valid-pod.yaml "${kube_flags[@]}"
@@ -427,6 +446,7 @@ runTests() {
 
   ### Create valid-pod POD
   # Pre-condition: no POD exists
+  create_and_use_new_namespace
   kube::test::get_object_assert pods "{{range.items}}{{$id_field}}:{{end}}" ''
   # Command
   kubectl create -f docs/admin/limitrange/valid-pod.yaml "${kube_flags[@]}"
@@ -451,6 +471,7 @@ runTests() {
 
   ### Create valid-pod POD
   # Pre-condition: no POD exists
+  create_and_use_new_namespace
   kube::test::get_object_assert pods "{{range.items}}{{$id_field}}:{{end}}" ''
   # Command
   kubectl create -f docs/admin/limitrange/valid-pod.yaml "${kube_flags[@]}"
@@ -553,7 +574,7 @@ __EOF__
   ## kubectl edit can update the image field of a POD. tmp-editor.sh is a fake editor
   echo -e '#!/bin/bash\nsed -i "s/nginx/gcr.io\/google_containers\/serve_hostname/g" $1' > /tmp/tmp-editor.sh
   chmod +x /tmp/tmp-editor.sh
-  EDITOR=/tmp/tmp-editor.sh kubectl edit "${kube_flags[@]}" pods/valid-pod
+  EDITOR=/tmp/tmp-editor.sh ${KUBE_OUTPUT_HOSTBIN}/kubectl edit "${kube_flags[@]}" pods/valid-pod
   # Post-condition: valid-pod POD has image gcr.io/google_containers/serve_hostname
   kube::test::get_object_assert pods "{{range.items}}{{$image_field}}:{{end}}" 'gcr.io/google_containers/serve_hostname:'
   # cleaning
@@ -589,6 +610,7 @@ __EOF__
 
   ### Create two PODs from 1 yaml file
   # Pre-condition: no POD exists
+  create_and_use_new_namespace
   kube::test::get_object_assert pods "{{range.items}}{{$id_field}}:{{end}}" ''
   # Command
   kubectl create -f docs/user-guide/multi-pod.yaml "${kube_flags[@]}"
@@ -606,6 +628,7 @@ __EOF__
   ## kubectl apply should update configuration annotations only if apply is already called
   ## 1. kubectl create doesn't set the annotation
   # Pre-Condition: no POD exists
+  create_and_use_new_namespace
   kube::test::get_object_assert pods "{{range.items}}{{$id_field}}:{{end}}" ''
   # Command: create a pod "test-pod"
   kubectl create -f hack/testdata/pod.yaml "${kube_flags[@]}"
@@ -646,6 +669,7 @@ __EOF__
   ## Configuration annotations should be set when --save-config is enabled
   ## 1. kubectl create --save-config should generate configuration annotation
   # Pre-Condition: no POD exists
+  create_and_use_new_namespace
   kube::test::get_object_assert pods "{{range.items}}{{$id_field}}:{{end}}" ''
   # Command: create a pod "test-pod"
   kubectl create -f hack/testdata/pod.yaml --save-config "${kube_flags[@]}"
@@ -655,6 +679,7 @@ __EOF__
   kubectl delete -f hack/testdata/pod.yaml "${kube_flags[@]}"
   ## 2. kubectl edit --save-config should generate configuration annotation
   # Pre-Condition: no POD exists, then create pod "test-pod", which shouldn't have configuration annotation
+  create_and_use_new_namespace
   kube::test::get_object_assert pods "{{range.items}}{{$id_field}}:{{end}}" ''
   kubectl create -f hack/testdata/pod.yaml "${kube_flags[@]}"
   ! [[ "$(kubectl get pods test-pod -o yaml "${kube_flags[@]}" | grep kubectl.kubernetes.io/last-applied-configuration)" ]]
@@ -669,6 +694,7 @@ __EOF__
   kubectl delete -f hack/testdata/pod.yaml "${kube_flags[@]}"
   ## 3. kubectl replace --save-config should generate configuration annotation
   # Pre-Condition: no POD exists, then create pod "test-pod", which shouldn't have configuration annotation
+  create_and_use_new_namespace
   kube::test::get_object_assert pods "{{range.items}}{{$id_field}}:{{end}}" ''
   kubectl create -f hack/testdata/pod.yaml "${kube_flags[@]}"
   ! [[ "$(kubectl get pods test-pod -o yaml "${kube_flags[@]}" | grep kubectl.kubernetes.io/last-applied-configuration)" ]]
@@ -687,7 +713,7 @@ __EOF__
   [[ "$(kubectl get rc nginx -o yaml "${kube_flags[@]}" | grep kubectl.kubernetes.io/last-applied-configuration)" ]]
   ## 5. kubectl expose --save-config should generate configuration annotation
   # Pre-Condition: no service exists
-  kube::test::get_object_assert svc "{{range.items}}{{$id_field}}:{{end}}" 'kubernetes:'
+  kube::test::get_object_assert svc "{{range.items}}{{$id_field}}:{{end}}" ''
   # Command: expose the rc "nginx"
   kubectl expose rc nginx --save-config --port=80 --target-port=8000 "${kube_flags[@]}"
   # Post-Condition: service "nginx" has configuration annotation
@@ -744,7 +770,8 @@ __EOF__
 
   ### Create a new namespace
   # Pre-condition: only the "default" namespace exists
-  kube::test::get_object_assert namespaces "{{range.items}}{{$id_field}}:{{end}}" 'default:'
+  # The Pre-condition doesn't hold anymore after we create and switch namespaces before creating pods with same name in the test.
+  # kube::test::get_object_assert namespaces "{{range.items}}{{$id_field}}:{{end}}" 'default:'
   # Command
   kubectl create namespace my-namespace
   # Post-condition: namespace 'my-namespace' is created.
@@ -856,6 +883,28 @@ __EOF__
   kubectl delete configmap test-configmap --namespace=test-configmaps
   kubectl delete namespace test-configmaps
   
+  ####################
+  # Service Accounts #
+  ####################
+
+  ### Create a new namespace
+  # Pre-condition: the test-service-accounts namespace does not exist
+  kube::test::get_object_assert 'namespaces' '{{range.items}}{{ if eq $id_field \"test-service-accounts\" }}found{{end}}{{end}}:' ':'
+  # Command
+  kubectl create namespace test-service-accounts
+  # Post-condition: namespace 'test-service-accounts' is created.
+  kube::test::get_object_assert 'namespaces/test-service-accounts' "{{$id_field}}" 'test-service-accounts'
+
+  ### Create a service account in a specific namespace
+  # Command
+  kubectl create serviceaccount test-service-account --namespace=test-service-accounts
+  # Post-condition: secret exists and has expected values
+  kube::test::get_object_assert 'serviceaccount/test-service-account --namespace=test-service-accounts' "{{$id_field}}" 'test-service-account'
+  # Clean-up
+  kubectl delete serviceaccount test-service-account --namespace=test-service-accounts
+  # Clean up
+  kubectl delete namespace test-service-accounts
+
   #################
   # Pod templates #
   #################
@@ -884,7 +933,8 @@ __EOF__
   ############
   # Services #
   ############
-
+  # switch back to the default namespace
+  kubectl config set-context "${CONTEXT}" --namespace=""
   kube::log::status "Testing kubectl(${version}:services)"
 
   ### Create redis-master service from JSON
@@ -1529,10 +1579,9 @@ __EOF__
   #####################
 
   kube::log::status "Testing resource aliasing"
-  kubectl create -f examples/cassandra/cassandra-controller.yaml "${kube_flags[@]}"
-  kubectl scale rc cassandra --replicas=1 "${kube_flags[@]}"
+  kubectl create -f examples/cassandra/cassandra.yaml "${kube_flags[@]}"
   kubectl create -f examples/cassandra/cassandra-service.yaml "${kube_flags[@]}"
-  kube::test::get_object_assert "all -l'app=cassandra'" "{{range.items}}{{range .metadata.labels}}{{.}}:{{end}}{{end}}" 'cassandra:cassandra:cassandra:'
+  kube::test::get_object_assert "all -l'app=cassandra'" "{{range.items}}{{range .metadata.labels}}{{.}}:{{end}}{{end}}" 'cassandra:cassandra:'
   kubectl delete all -l app=cassandra "${kube_flags[@]}"
 
 
@@ -1575,7 +1624,7 @@ __EOF__
   ############################
 
   # Pre-condition: the "default" namespace exists
-  kube::test::get_object_assert namespaces "{{range.items}}{{$id_field}}:{{end}}" 'default:'
+  kube::test::get_object_assert namespaces "{{range.items}}{{if eq $id_field \\\"default\\\"}}{{$id_field}}:{{end}}{{end}}" 'default:'
 
   ### Create POD
   # Pre-condition: no POD exists

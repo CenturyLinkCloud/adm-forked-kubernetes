@@ -32,7 +32,6 @@ import (
 	clientset "k8s.io/kubernetes/pkg/client/clientset_generated/internalclientset"
 	"k8s.io/kubernetes/pkg/client/record"
 	unversionedcore "k8s.io/kubernetes/pkg/client/typed/generated/core/unversioned"
-	client "k8s.io/kubernetes/pkg/client/unversioned"
 	"k8s.io/kubernetes/pkg/cloudprovider"
 	"k8s.io/kubernetes/pkg/controller"
 	"k8s.io/kubernetes/pkg/controller/framework"
@@ -120,7 +119,7 @@ type NodeController struct {
 	daemonSetController *framework.Controller
 	daemonSetStore      cache.StoreToDaemonSetLister
 
-	forcefullyDeletePod func(*api.Pod)
+	forcefullyDeletePod func(*api.Pod) error
 }
 
 // NewNodeController returns a new node controller to sync instances from cloudprovider.
@@ -167,7 +166,7 @@ func NewNodeController(
 		now:                    unversioned.Now,
 		clusterCIDR:            clusterCIDR,
 		allocateNodeCIDRs:      allocateNodeCIDRs,
-		forcefullyDeletePod:    func(p *api.Pod) { forcefullyDeletePod(kubeClient, p) },
+		forcefullyDeletePod:    func(p *api.Pod) error { return forcefullyDeletePod(kubeClient, p) },
 	}
 
 	nc.podStore.Store, nc.podController = framework.NewInformer(
@@ -329,7 +328,7 @@ func (nc *NodeController) maybeDeleteTerminatingPod(obj interface{}) {
 
 	// delete terminating pods that have not yet been scheduled
 	if len(pod.Spec.NodeName) == 0 {
-		nc.forcefullyDeletePod(pod)
+		utilruntime.HandleError(nc.forcefullyDeletePod(pod))
 		return
 	}
 
@@ -345,7 +344,7 @@ func (nc *NodeController) maybeDeleteTerminatingPod(obj interface{}) {
 	// delete terminating pods that have been scheduled on
 	// nonexistent nodes
 	if !found {
-		nc.forcefullyDeletePod(pod)
+		utilruntime.HandleError(nc.forcefullyDeletePod(pod))
 		return
 	}
 
@@ -358,21 +357,22 @@ func (nc *NodeController) maybeDeleteTerminatingPod(obj interface{}) {
 	v, err := version.Parse(node.Status.NodeInfo.KubeletVersion)
 	if err != nil {
 		glog.Infof("couldn't parse verions %q of minion: %v", node.Status.NodeInfo.KubeletVersion, err)
-		nc.forcefullyDeletePod(pod)
+		utilruntime.HandleError(nc.forcefullyDeletePod(pod))
 		return
 	}
 	if gracefulDeletionVersion.GT(v) {
-		nc.forcefullyDeletePod(pod)
+		utilruntime.HandleError(nc.forcefullyDeletePod(pod))
 		return
 	}
 }
 
-func forcefullyDeletePod(c clientset.Interface, pod *api.Pod) {
+func forcefullyDeletePod(c clientset.Interface, pod *api.Pod) error {
 	var zero int64
 	err := c.Core().Pods(pod.Namespace).Delete(pod.Name, &api.DeleteOptions{GracePeriodSeconds: &zero})
-	if err != nil {
-		utilruntime.HandleError(err)
+	if err == nil {
+		glog.V(2).Infof("forceful deletion of %s succeeded", pod.Name)
 	}
+	return err
 }
 
 // monitorNodeStatus verifies node status are constantly updated by kubelet, and if not,
@@ -645,7 +645,11 @@ func (nc *NodeController) tryUpdateNodeStatus(node *api.Node) (time.Duration, ap
 		} else {
 			transitionTime = savedNodeStatus.readyTransitionTimestamp
 		}
-		glog.V(3).Infof("Nodes ReadyCondition updated. Updating timestamp: %+v\n vs %+v.", savedNodeStatus.status, node.Status)
+		if glog.V(5) {
+			glog.Infof("Node %s ReadyCondition updated. Updating timestamp: %+v vs %+v.", node.Name, savedNodeStatus.status, node.Status)
+		} else {
+			glog.V(3).Infof("Node %s ReadyCondition updated. Updating timestamp.", node.Name)
+		}
 		savedNodeStatus = nodeStatusData{
 			status:                   node.Status,
 			probeTimestamp:           nc.now(),
@@ -726,7 +730,7 @@ func (nc *NodeController) tryUpdateNodeStatus(node *api.Node) (time.Duration, ap
 // returns true if the provided node still has pods scheduled to it, or an error if
 // the server could not be contacted.
 func (nc *NodeController) hasPods(nodeName string) (bool, error) {
-	selector := fields.OneTermEqualSelector(client.PodHost, nodeName)
+	selector := fields.OneTermEqualSelector(api.PodHostField, nodeName)
 	options := api.ListOptions{FieldSelector: selector}
 	pods, err := nc.kubeClient.Core().Pods(api.NamespaceAll).List(options)
 	if err != nil {
@@ -761,7 +765,7 @@ func (nc *NodeController) cancelPodEviction(nodeName string) bool {
 // if any pods were deleted.
 func (nc *NodeController) deletePods(nodeName string) (bool, error) {
 	remaining := false
-	selector := fields.OneTermEqualSelector(client.PodHost, nodeName)
+	selector := fields.OneTermEqualSelector(api.PodHostField, nodeName)
 	options := api.ListOptions{FieldSelector: selector}
 	pods, err := nc.kubeClient.Core().Pods(api.NamespaceAll).List(options)
 	if err != nil {
@@ -801,7 +805,7 @@ func (nc *NodeController) deletePods(nodeName string) (bool, error) {
 // return true if success
 func (nc *NodeController) markAllPodsNotReady(nodeName string) error {
 	glog.V(2).Infof("Update ready status of pods on node [%v]", nodeName)
-	opts := api.ListOptions{FieldSelector: fields.OneTermEqualSelector(client.PodHost, nodeName)}
+	opts := api.ListOptions{FieldSelector: fields.OneTermEqualSelector(api.PodHostField, nodeName)}
 	pods, err := nc.kubeClient.Core().Pods(api.NamespaceAll).List(opts)
 	if err != nil {
 		return err
@@ -842,7 +846,7 @@ func (nc *NodeController) terminatePods(nodeName string, since time.Time) (bool,
 	// have we deleted all pods
 	complete := true
 
-	selector := fields.OneTermEqualSelector(client.PodHost, nodeName)
+	selector := fields.OneTermEqualSelector(api.PodHostField, nodeName)
 	options := api.ListOptions{FieldSelector: selector}
 	pods, err := nc.kubeClient.Core().Pods(api.NamespaceAll).List(options)
 	if err != nil {

@@ -134,6 +134,7 @@ type resourceGatherWorker struct {
 	containerIDs         []string
 	stopCh               chan struct{}
 	dataSeries           []resourceUsagePerContainer
+	finished             bool
 }
 
 func (w *resourceGatherWorker) singleProbe() {
@@ -153,21 +154,14 @@ func (w *resourceGatherWorker) gather(initialSleep time.Duration) {
 	defer utilruntime.HandleCrash()
 	defer w.wg.Done()
 	defer Logf("Closing worker for %v", w.nodeName)
+	defer func() { w.finished = true }()
 	select {
 	case <-time.After(initialSleep):
-		// TODO: remove after #21313 is fixed
-		Logf("Probing %v", w.nodeName)
 		w.singleProbe()
-		// TODO: remove after #21313 is fixed
-		Logf("Finished probe for %v", w.nodeName)
 		for {
 			select {
 			case <-time.After(resourceDataGatheringPeriod):
-				// TODO: remove after #21313 is fixed
-				Logf("Probing %v", w.nodeName)
 				w.singleProbe()
-				// TODO: remove after #21313 is fixed
-				Logf("Finished probe for %v", w.nodeName)
 			case <-w.stopCh:
 				return
 			}
@@ -231,6 +225,7 @@ func NewResourceUsageGatherer(c *client.Client) (*containerResourceGatherer, err
 			containerIDToNameMap: g.containerIDToNameMap,
 			containerIDs:         g.containerIDs,
 			stopCh:               g.stopCh,
+			finished:             false,
 		})
 	}
 	return &g, nil
@@ -244,16 +239,34 @@ func (g *containerResourceGatherer) startGatheringData() {
 func (g *containerResourceGatherer) stopAndSummarize(percentiles []int, constraints map[string]resourceConstraint) *ResourceUsageSummary {
 	close(g.stopCh)
 	Logf("Closed stop channel. Waiting for %v workers", len(g.workers))
-	g.workerWg.Wait()
-	Logf("Waitgroup finished.")
+	finished := make(chan struct{})
+	go func() {
+		g.workerWg.Wait()
+		finished <- struct{}{}
+	}()
+	select {
+	case <-finished:
+		Logf("Waitgroup finished.")
+	case <-time.After(2 * time.Minute):
+		unfinished := make([]string, 0)
+		for i := range g.workers {
+			if !g.workers[i].finished {
+				unfinished = append(unfinished, g.workers[i].nodeName)
+			}
+		}
+		Logf("Timed out while waiting for waitgroup, some workers failed to finish: %v", unfinished)
+	}
+
 	if len(percentiles) == 0 {
 		Logf("Warning! Empty percentile list for stopAndPrintData.")
 		return &ResourceUsageSummary{}
 	}
 	data := make(map[int]resourceUsagePerContainer)
 	for i := range g.workers {
-		stats := computePercentiles(g.workers[i].dataSeries, percentiles)
-		data = leftMergeData(stats, data)
+		if g.workers[i].finished {
+			stats := computePercentiles(g.workers[i].dataSeries, percentiles)
+			data = leftMergeData(stats, data)
+		}
 	}
 
 	// Workers has been stopped. We need to gather data stored in them.

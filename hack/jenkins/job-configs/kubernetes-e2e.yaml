@@ -136,12 +136,15 @@
                 export NODE_SIZE="n1-standard-2"
                 export NODE_DISK_SIZE="50GB"
                 export NUM_NODES="100"
+                export REGISTER_MASTER="true"
                 # Reduce logs verbosity
                 export TEST_CLUSTER_LOG_LEVEL="--v=2"
                 # TODO: Remove when we figure out the reason for occasional failures #19048
                 export KUBELET_TEST_LOG_LEVEL="--v=4"
                 # Increase resync period to simulate production
                 export TEST_CLUSTER_RESYNC_PERIOD="--min-resync-period=12h"
+                # Increase delete collection parallelism
+                export TEST_CLUSTER_DELETE_COLLECTION_WORKERS="--delete-collection-workers=16"
         - 'gce-examples':
             description: 'Run E2E examples test on GCE.'
             timeout: 90
@@ -359,13 +362,8 @@
             test-owner: 'beeps'
             provider-env: '{gke-provider-env}'
             job-env: |
-                # XXX Not a unique project
-                export E2E_NAME="e2e-gke-ingress"
                 export GINKGO_TEST_ARGS="--ginkgo.focus=\[Feature:Ingress\]"
-                # TODO: Move this into a different project. Currently, since this test
-                # shares resources with various other networking tests, it's easier to
-                # zero in on the source of a leak if it's run in isolation.
-                export PROJECT="kubernetes-ingress"
+                export PROJECT="kubernetes-gke-ingress"
         - 'gce-ingress':
             description: 'Run [Feature:Ingress] tests on GCE.'
             timeout: 90
@@ -373,12 +371,7 @@
             test-owner: 'beeps'
             provider-env: '{gce-provider-env}'
             job-env: |
-                # XXX Not a unique project
-                export E2E_NAME="e2e-ingress"
                 export GINKGO_TEST_ARGS="--ginkgo.focus=\[Feature:Ingress\]"
-                # TODO: Move this into a different project. Currently, since this test
-                # shares resources with various other networking tests, so it's easier
-                # to zero in on the source of a leak if it's run in isolation.
                 export PROJECT="kubernetes-ingress"
         - 'gce-flannel':
             description: 'Run E2E tests on GCE using Flannel and the latest successful build. This suite is quarantined in a dedicated project because Flannel integration is experimental.'
@@ -505,8 +498,11 @@
         export EXIT_ON_WEAK_ERROR="false"
         # Reduce logs verbosity
         export TEST_CLUSTER_LOG_LEVEL="--v=1"
+        export MAX_INSTANCES_PER_MIG="1000"
         # Increase resync period to simulate production
         export TEST_CLUSTER_RESYNC_PERIOD="--min-resync-period=12h"
+        # Increase delete collection parallelism
+        export TEST_CLUSTER_DELETE_COLLECTION_WORKERS="--delete-collection-workers=16"
     jobs:
         - 'kubernetes-e2e-{suffix}'
 

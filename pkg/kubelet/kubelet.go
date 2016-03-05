@@ -44,7 +44,6 @@ import (
 	"k8s.io/kubernetes/pkg/client/cache"
 	clientset "k8s.io/kubernetes/pkg/client/clientset_generated/internalclientset"
 	"k8s.io/kubernetes/pkg/client/record"
-	client "k8s.io/kubernetes/pkg/client/unversioned"
 	"k8s.io/kubernetes/pkg/cloudprovider"
 	"k8s.io/kubernetes/pkg/fieldpath"
 	"k8s.io/kubernetes/pkg/fields"
@@ -209,6 +208,7 @@ func NewMainKubelet(
 	volumeStatsAggPeriod time.Duration,
 	containerRuntimeOptions []kubecontainer.Option,
 	hairpinMode string,
+	babysitDaemons bool,
 	kubeOptions []Option,
 ) (*Kubelet, error) {
 	if rootDirectory == "" {
@@ -239,7 +239,7 @@ func NewMainKubelet(
 	if kubeClient != nil {
 		// TODO: cache.NewListWatchFromClient is limited as it takes a client implementation rather
 		// than an interface. There is no way to construct a list+watcher using resource name.
-		fieldSelector := fields.Set{client.ObjectNameField: nodeName}.AsSelector()
+		fieldSelector := fields.Set{api.ObjectNameField: nodeName}.AsSelector()
 		listWatch := &cache.ListWatch{
 			ListFunc: func(options api.ListOptions) (runtime.Object, error) {
 				options.FieldSelector = fieldSelector
@@ -332,6 +332,7 @@ func NewMainKubelet(
 		reservation:                  reservation,
 		enableCustomMetrics:          enableCustomMetrics,
 		hairpinMode:                  componentconfig.HairpinMode(hairpinMode),
+		babysitDaemons:               babysitDaemons,
 	}
 	// TODO: Factor out "StatsProvider" from Kubelet so we don't have a cyclic dependency
 	klet.resourceAnalyzer = stats.NewResourceAnalyzer(klet, volumeStatsAggPeriod)
@@ -731,6 +732,9 @@ type Kubelet struct {
 	// (make cbr0 promiscuous), "hairpin-veth" (set the hairpin flag on veth interfaces)
 	// or "none" (do nothing).
 	hairpinMode componentconfig.HairpinMode
+
+	// The node has babysitter process monitoring docker and kubelet
+	babysitDaemons bool
 
 	// handlers called during the tryUpdateNodeStatus cycle
 	setNodeStatusFuncs []func(*api.Node) error
@@ -1926,14 +1930,19 @@ func (kl *Kubelet) cleanupOrphanedVolumes(pods []*api.Pod, runningPods []*kubeco
 			glog.Warningf("Orphaned volume %q found, tearing down volume", name)
 			// TODO(yifan): Refactor this hacky string manipulation.
 			kl.volumeManager.DeleteVolumes(types.UID(parts[0]))
+			// Get path reference count
+			refs, err := mount.GetMountRefs(kl.mounter, cleanerTuple.Cleaner.GetPath())
+			if err != nil {
+				return fmt.Errorf("Could not get mount path references %v", err)
+			}
 			//TODO (jonesdl) This should not block other kubelet synchronization procedures
-			err := cleanerTuple.Cleaner.TearDown()
+			err = cleanerTuple.Cleaner.TearDown()
 			if err != nil {
 				glog.Errorf("Could not tear down volume %q: %v", name, err)
 			}
 
 			// volume is unmounted.  some volumes also require detachment from the node.
-			if cleanerTuple.Detacher != nil {
+			if cleanerTuple.Detacher != nil && len(refs) == 1 {
 				detacher := *cleanerTuple.Detacher
 				err = detacher.Detach()
 				if err != nil {
@@ -1941,31 +1950,6 @@ func (kl *Kubelet) cleanupOrphanedVolumes(pods []*api.Pod, runningPods []*kubeco
 				}
 			}
 		}
-	}
-	return nil
-}
-
-// Delete any pods that are no longer running and are marked for deletion.
-func (kl *Kubelet) cleanupTerminatedPods(pods []*api.Pod, runningPods []*kubecontainer.Pod) error {
-	var terminating []*api.Pod
-	for _, pod := range pods {
-		if pod.DeletionTimestamp != nil {
-			found := false
-			for _, runningPod := range runningPods {
-				if runningPod.ID == pod.UID {
-					found = true
-					break
-				}
-			}
-			if found {
-				glog.V(5).Infof("Keeping terminated pod %q, still running", format.Pod(pod))
-				continue
-			}
-			terminating = append(terminating, pod)
-		}
-	}
-	if !kl.statusManager.TerminatePods(terminating) {
-		return errors.New("not all pods were successfully terminated")
 	}
 	return nil
 }
@@ -2160,10 +2144,6 @@ func (kl *Kubelet) HandlePodCleanups() error {
 
 	// Remove any orphaned mirror pods.
 	kl.podManager.DeleteOrphanedMirrorPods()
-
-	if err := kl.cleanupTerminatedPods(allPods, runningPods); err != nil {
-		glog.Errorf("Failed to cleanup terminated pods: %v", err)
-	}
 
 	// Clear out any old bandwidth rules
 	if err = kl.cleanupBandwidthLimits(allPods); err != nil {
@@ -2425,6 +2405,13 @@ func (kl *Kubelet) syncLoopIteration(updates <-chan kubetypes.PodUpdate, handler
 
 func (kl *Kubelet) dispatchWork(pod *api.Pod, syncType kubetypes.SyncPodType, mirrorPod *api.Pod, start time.Time) {
 	if kl.podIsTerminated(pod) {
+		if pod.DeletionTimestamp != nil {
+			// If the pod is in a termianted state, there is no pod worker to
+			// handle the work item. Check if the DeletionTimestamp has been
+			// set, and force a status update to trigger a pod deletion request
+			// to the apiserver.
+			kl.statusManager.TerminatePod(pod)
+		}
 		return
 	}
 	// Run the sync in an async worker.
@@ -2684,7 +2671,7 @@ func (kl *Kubelet) reconcileCBR0(podCIDR string) error {
 	}
 	// Set cbr0 interface address to first address in IPNet
 	cidr.IP.To4()[3] += 1
-	if err := ensureCbr0(cidr, kl.hairpinMode == componentconfig.PromiscuousBridge); err != nil {
+	if err := ensureCbr0(cidr, kl.hairpinMode == componentconfig.PromiscuousBridge, kl.babysitDaemons); err != nil {
 		return err
 	}
 	if kl.shaper == nil {

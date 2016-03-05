@@ -32,6 +32,7 @@
 - job-template:
     name: 'kubernetes-soak-continuous-e2e-{suffix}'
     description: '{e2e-description} Test Owner: {test-owner}'
+    workspace: '/var/lib/jenkins/jobs/kubernetes-soak-weekly-deploy-{suffix}/workspace'
     logrotate:
         daysToKeep: 7
     builders:
@@ -71,6 +72,7 @@
         export E2E_TEST="false"
         export E2E_DOWN="false"
     soak-continuous: |
+        export JENKINS_USE_EXISTING_BINARIES="y"
         export FAIL_ON_GCP_RESOURCE_LEAK="false"
         export E2E_UP="false"
         export E2E_DOWN="false"

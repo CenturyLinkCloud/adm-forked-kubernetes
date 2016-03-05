@@ -192,6 +192,12 @@ type APIGroupInfo struct {
 	NegotiatedSerializer runtime.NegotiatedSerializer
 	// ParameterCodec performs conversions for query parameters passed to API calls
 	ParameterCodec runtime.ParameterCodec
+
+	// SubresourceGroupVersionKind contains the GroupVersionKind overrides for each subresource that is
+	// accessible from this API group version. The GroupVersionKind is that of the external version of
+	// the subresource. The key of this map should be the path of the subresource. The keys here should
+	// match the keys in the Storage map above for subresources.
+	SubresourceGroupVersionKind map[string]unversioned.GroupVersionKind
 }
 
 // Config is a structure used to configure a GenericAPIServer.
@@ -650,9 +656,10 @@ func (s *GenericAPIServer) Run(options *ServerRunOptions) {
 	}
 
 	longRunningRE := regexp.MustCompile(options.LongRunningRequestRE)
+	longRunningRequestCheck := apiserver.BasicLongRunningRequestCheck(longRunningRE, map[string]string{"watch": "true"})
 	longRunningTimeout := func(req *http.Request) (<-chan time.Time, string) {
 		// TODO unify this with apiserver.MaxInFlightLimit
-		if longRunningRE.MatchString(req.URL.Path) || req.URL.Query().Get("watch") == "true" {
+		if longRunningRequestCheck(req) {
 			return nil, ""
 		}
 		return time.After(time.Minute), ""
@@ -662,7 +669,7 @@ func (s *GenericAPIServer) Run(options *ServerRunOptions) {
 		handler := apiserver.TimeoutHandler(s.Handler, longRunningTimeout)
 		secureServer := &http.Server{
 			Addr:           secureLocation,
-			Handler:        apiserver.MaxInFlightLimit(sem, longRunningRE, apiserver.RecoverPanics(handler)),
+			Handler:        apiserver.MaxInFlightLimit(sem, longRunningRequestCheck, apiserver.RecoverPanics(handler)),
 			MaxHeaderBytes: 1 << 20,
 			TLSConfig: &tls.Config{
 				// Change default from SSLv3 to TLSv1.0 (because of POODLE vulnerability)
@@ -837,6 +844,7 @@ func (s *GenericAPIServer) getAPIGroupVersion(apiGroupInfo *APIGroupInfo, groupV
 	version.Creater = apiGroupInfo.Scheme
 	version.Convertor = apiGroupInfo.Scheme
 	version.Typer = apiGroupInfo.Scheme
+	version.SubresourceGroupVersionKind = apiGroupInfo.SubresourceGroupVersionKind
 	return version, err
 }
 

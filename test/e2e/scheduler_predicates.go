@@ -46,49 +46,6 @@ func getPodsScheduled(pods *api.PodList) (scheduledPods, notScheduledPods []api.
 	return
 }
 
-// Simplified version of RunRC, that does not create RC, but creates plain Pods and
-// requires passing whole Pod definition, which is needed to test various Scheduler predicates.
-func startPods(c *client.Client, replicas int, ns string, podNamePrefix string, pod api.Pod) {
-	allPods, err := c.Pods(api.NamespaceAll).List(api.ListOptions{})
-	expectNoError(err)
-	podsScheduledBefore, _ := getPodsScheduled(allPods)
-
-	for i := 0; i < replicas; i++ {
-		podName := fmt.Sprintf("%v-%v", podNamePrefix, i)
-		pod.ObjectMeta.Name = podName
-		pod.ObjectMeta.Labels["name"] = podName
-		pod.Spec.Containers[0].Name = podName
-		_, err = c.Pods(ns).Create(&pod)
-		expectNoError(err)
-	}
-
-	// Wait for pods to start running.  Note: this is a functional
-	// test, not a performance test, so the timeout needs to be
-	// sufficiently long that it's only triggered if things are
-	// completely broken vs. running slowly.
-	timeout := 10 * time.Minute
-	startTime := time.Now()
-	currentlyScheduledPods := 0
-	for len(podsScheduledBefore)+replicas != currentlyScheduledPods {
-		allPods, err := c.Pods(api.NamespaceAll).List(api.ListOptions{})
-		expectNoError(err)
-		scheduledPods := 0
-		for _, pod := range allPods.Items {
-			if pod.Spec.NodeName != "" {
-				scheduledPods += 1
-			}
-		}
-		currentlyScheduledPods = scheduledPods
-		Logf("%v pods running", currentlyScheduledPods)
-		if startTime.Add(timeout).Before(time.Now()) {
-			Logf("Timed out after %v waiting for pods to start running.", timeout)
-			break
-		}
-		time.Sleep(5 * time.Second)
-	}
-	Expect(currentlyScheduledPods).To(Equal(len(podsScheduledBefore) + replicas))
-}
-
 func getRequestedCPU(pod api.Pod) int64 {
 	var result int64
 	for _, container := range pod.Spec.Containers {
@@ -193,12 +150,15 @@ var _ = Describe("SchedulerPredicates [Serial]", func() {
 		}
 	})
 
-	framework := NewFramework("sched-pred")
+	framework := NewDefaultFramework("sched-pred")
 
 	BeforeEach(func() {
 		c = framework.Client
 		ns = framework.Namespace.Name
 		nodeList = ListSchedulableNodesOrDie(c)
+
+		err := checkTestingNSDeletedExcept(c, ns)
+		expectNoError(err)
 
 		// Every test case in this suite assumes that cluster add-on pods stay stable and
 		// cannot be run in parallel with any other test that touches Nodes or Pods.
@@ -247,7 +207,7 @@ var _ = Describe("SchedulerPredicates [Serial]", func() {
 					},
 				},
 			},
-		})
+		}, true)
 
 		podName := "additional-pod"
 		_, err := c.Pods(ns).Create(&api.Pod{
@@ -333,7 +293,7 @@ var _ = Describe("SchedulerPredicates [Serial]", func() {
 					},
 				},
 			},
-		})
+		}, true)
 
 		podName := "additional-pod"
 		_, err = c.Pods(ns).Create(&api.Pod{

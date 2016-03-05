@@ -32,8 +32,8 @@ import (
 	"k8s.io/kubernetes/pkg/client/cache"
 	clientset "k8s.io/kubernetes/pkg/client/clientset_generated/internalclientset"
 	"k8s.io/kubernetes/pkg/client/clientset_generated/internalclientset/fake"
+	"k8s.io/kubernetes/pkg/client/restclient"
 	"k8s.io/kubernetes/pkg/client/testing/core"
-	client "k8s.io/kubernetes/pkg/client/unversioned"
 	"k8s.io/kubernetes/pkg/client/unversioned/testclient"
 	"k8s.io/kubernetes/pkg/controller"
 	"k8s.io/kubernetes/pkg/runtime"
@@ -137,7 +137,7 @@ type serverResponse struct {
 }
 
 func TestSyncReplicaSetDoesNothing(t *testing.T) {
-	client := clientset.NewForConfigOrDie(&client.Config{Host: "", ContentConfig: client.ContentConfig{GroupVersion: testapi.Default.GroupVersion()}})
+	client := clientset.NewForConfigOrDie(&restclient.Config{Host: "", ContentConfig: restclient.ContentConfig{GroupVersion: testapi.Default.GroupVersion()}})
 	fakePodControl := controller.FakePodControl{}
 	manager := NewReplicaSetController(client, controller.NoResyncPeriodFunc, BurstReplicas, 0)
 	manager.podStoreSynced = alwaysReady
@@ -154,7 +154,7 @@ func TestSyncReplicaSetDoesNothing(t *testing.T) {
 }
 
 func TestSyncReplicaSetDeletes(t *testing.T) {
-	client := clientset.NewForConfigOrDie(&client.Config{Host: "", ContentConfig: client.ContentConfig{GroupVersion: testapi.Default.GroupVersion()}})
+	client := clientset.NewForConfigOrDie(&restclient.Config{Host: "", ContentConfig: restclient.ContentConfig{GroupVersion: testapi.Default.GroupVersion()}})
 	fakePodControl := controller.FakePodControl{}
 	manager := NewReplicaSetController(client, controller.NoResyncPeriodFunc, BurstReplicas, 0)
 	manager.podStoreSynced = alwaysReady
@@ -171,7 +171,7 @@ func TestSyncReplicaSetDeletes(t *testing.T) {
 }
 
 func TestDeleteFinalStateUnknown(t *testing.T) {
-	client := clientset.NewForConfigOrDie(&client.Config{Host: "", ContentConfig: client.ContentConfig{GroupVersion: testapi.Default.GroupVersion()}})
+	client := clientset.NewForConfigOrDie(&restclient.Config{Host: "", ContentConfig: restclient.ContentConfig{GroupVersion: testapi.Default.GroupVersion()}})
 	fakePodControl := controller.FakePodControl{}
 	manager := NewReplicaSetController(client, controller.NoResyncPeriodFunc, BurstReplicas, 0)
 	manager.podStoreSynced = alwaysReady
@@ -205,7 +205,7 @@ func TestDeleteFinalStateUnknown(t *testing.T) {
 }
 
 func TestSyncReplicaSetCreates(t *testing.T) {
-	client := clientset.NewForConfigOrDie(&client.Config{Host: "", ContentConfig: client.ContentConfig{GroupVersion: testapi.Default.GroupVersion()}})
+	client := clientset.NewForConfigOrDie(&restclient.Config{Host: "", ContentConfig: restclient.ContentConfig{GroupVersion: testapi.Default.GroupVersion()}})
 	manager := NewReplicaSetController(client, controller.NoResyncPeriodFunc, BurstReplicas, 0)
 	manager.podStoreSynced = alwaysReady
 
@@ -228,7 +228,7 @@ func TestStatusUpdatesWithoutReplicasChange(t *testing.T) {
 	}
 	testServer := httptest.NewServer(&fakeHandler)
 	defer testServer.Close()
-	client := clientset.NewForConfigOrDie(&client.Config{Host: testServer.URL, ContentConfig: client.ContentConfig{GroupVersion: testapi.Default.GroupVersion()}})
+	client := clientset.NewForConfigOrDie(&restclient.Config{Host: testServer.URL, ContentConfig: restclient.ContentConfig{GroupVersion: testapi.Default.GroupVersion()}})
 	manager := NewReplicaSetController(client, controller.NoResyncPeriodFunc, BurstReplicas, 0)
 	manager.podStoreSynced = alwaysReady
 
@@ -271,7 +271,7 @@ func TestControllerUpdateReplicas(t *testing.T) {
 	testServer := httptest.NewServer(&fakeHandler)
 	defer testServer.Close()
 
-	client := clientset.NewForConfigOrDie(&client.Config{Host: testServer.URL, ContentConfig: client.ContentConfig{GroupVersion: testapi.Default.GroupVersion()}})
+	client := clientset.NewForConfigOrDie(&restclient.Config{Host: testServer.URL, ContentConfig: restclient.ContentConfig{GroupVersion: testapi.Default.GroupVersion()}})
 	manager := NewReplicaSetController(client, controller.NoResyncPeriodFunc, BurstReplicas, 0)
 	manager.podStoreSynced = alwaysReady
 
@@ -310,7 +310,7 @@ func TestSyncReplicaSetDormancy(t *testing.T) {
 	}
 	testServer := httptest.NewServer(&fakeHandler)
 	defer testServer.Close()
-	client := clientset.NewForConfigOrDie(&client.Config{Host: testServer.URL, ContentConfig: client.ContentConfig{GroupVersion: testapi.Default.GroupVersion()}})
+	client := clientset.NewForConfigOrDie(&restclient.Config{Host: testServer.URL, ContentConfig: restclient.ContentConfig{GroupVersion: testapi.Default.GroupVersion()}})
 
 	fakePodControl := controller.FakePodControl{}
 	manager := NewReplicaSetController(client, controller.NoResyncPeriodFunc, BurstReplicas, 0)
@@ -360,7 +360,7 @@ func TestSyncReplicaSetDormancy(t *testing.T) {
 }
 
 func TestPodControllerLookup(t *testing.T) {
-	manager := NewReplicaSetController(clientset.NewForConfigOrDie(&client.Config{Host: "", ContentConfig: client.ContentConfig{GroupVersion: testapi.Default.GroupVersion()}}), controller.NoResyncPeriodFunc, BurstReplicas, 0)
+	manager := NewReplicaSetController(clientset.NewForConfigOrDie(&restclient.Config{Host: "", ContentConfig: restclient.ContentConfig{GroupVersion: testapi.Default.GroupVersion()}}), controller.NoResyncPeriodFunc, BurstReplicas, 0)
 	manager.podStoreSynced = alwaysReady
 	testCases := []struct {
 		inRSs     []*extensions.ReplicaSet
@@ -574,7 +574,7 @@ func TestControllerUpdateRequeue(t *testing.T) {
 	testServer := httptest.NewServer(&fakeHandler)
 	defer testServer.Close()
 
-	client := clientset.NewForConfigOrDie(&client.Config{Host: testServer.URL, ContentConfig: client.ContentConfig{GroupVersion: testapi.Default.GroupVersion()}})
+	client := clientset.NewForConfigOrDie(&restclient.Config{Host: testServer.URL, ContentConfig: restclient.ContentConfig{GroupVersion: testapi.Default.GroupVersion()}})
 	manager := NewReplicaSetController(client, controller.NoResyncPeriodFunc, BurstReplicas, 0)
 	manager.podStoreSynced = alwaysReady
 
@@ -653,7 +653,7 @@ func TestControllerUpdateStatusWithFailure(t *testing.T) {
 }
 
 func doTestControllerBurstReplicas(t *testing.T, burstReplicas, numReplicas int) {
-	client := clientset.NewForConfigOrDie(&client.Config{Host: "", ContentConfig: client.ContentConfig{GroupVersion: testapi.Default.GroupVersion()}})
+	client := clientset.NewForConfigOrDie(&restclient.Config{Host: "", ContentConfig: restclient.ContentConfig{GroupVersion: testapi.Default.GroupVersion()}})
 	fakePodControl := controller.FakePodControl{}
 	manager := NewReplicaSetController(client, controller.NoResyncPeriodFunc, burstReplicas, 0)
 	manager.podStoreSynced = alwaysReady
@@ -775,7 +775,7 @@ func (fe FakeRSExpectations) SatisfiedExpectations(controllerKey string) bool {
 // TestRSSyncExpectations tests that a pod cannot sneak in between counting active pods
 // and checking expectations.
 func TestRSSyncExpectations(t *testing.T) {
-	client := clientset.NewForConfigOrDie(&client.Config{Host: "", ContentConfig: client.ContentConfig{GroupVersion: testapi.Default.GroupVersion()}})
+	client := clientset.NewForConfigOrDie(&restclient.Config{Host: "", ContentConfig: restclient.ContentConfig{GroupVersion: testapi.Default.GroupVersion()}})
 	fakePodControl := controller.FakePodControl{}
 	manager := NewReplicaSetController(client, controller.NoResyncPeriodFunc, 2, 0)
 	manager.podStoreSynced = alwaysReady
@@ -801,7 +801,7 @@ func TestRSSyncExpectations(t *testing.T) {
 }
 
 func TestDeleteControllerAndExpectations(t *testing.T) {
-	client := clientset.NewForConfigOrDie(&client.Config{Host: "", ContentConfig: client.ContentConfig{GroupVersion: testapi.Default.GroupVersion()}})
+	client := clientset.NewForConfigOrDie(&restclient.Config{Host: "", ContentConfig: restclient.ContentConfig{GroupVersion: testapi.Default.GroupVersion()}})
 	manager := NewReplicaSetController(client, controller.NoResyncPeriodFunc, 10, 0)
 	manager.podStoreSynced = alwaysReady
 
@@ -836,14 +836,14 @@ func TestDeleteControllerAndExpectations(t *testing.T) {
 	}
 
 	// This should have no effect, since we've deleted the ReplicaSet.
-	podExp.Seen(1, 0)
+	podExp.Add(-1, 0)
 	manager.podStore.Store.Replace(make([]interface{}, 0), "0")
 	manager.syncReplicaSet(getKey(rs, t))
 	validateSyncReplicaSet(t, &fakePodControl, 0, 0)
 }
 
 func TestRSManagerNotReady(t *testing.T) {
-	client := clientset.NewForConfigOrDie(&client.Config{Host: "", ContentConfig: client.ContentConfig{GroupVersion: testapi.Default.GroupVersion()}})
+	client := clientset.NewForConfigOrDie(&restclient.Config{Host: "", ContentConfig: restclient.ContentConfig{GroupVersion: testapi.Default.GroupVersion()}})
 	fakePodControl := controller.FakePodControl{}
 	manager := NewReplicaSetController(client, controller.NoResyncPeriodFunc, 2, 0)
 	manager.podControl = &fakePodControl
@@ -880,7 +880,7 @@ func shuffle(controllers []*extensions.ReplicaSet) []*extensions.ReplicaSet {
 }
 
 func TestOverlappingRSs(t *testing.T) {
-	client := clientset.NewForConfigOrDie(&client.Config{Host: "", ContentConfig: client.ContentConfig{GroupVersion: testapi.Default.GroupVersion()}})
+	client := clientset.NewForConfigOrDie(&restclient.Config{Host: "", ContentConfig: restclient.ContentConfig{GroupVersion: testapi.Default.GroupVersion()}})
 	labelMap := map[string]string{"foo": "bar"}
 
 	for i := 0; i < 5; i++ {
@@ -908,5 +908,87 @@ func TestOverlappingRSs(t *testing.T) {
 		if queueRS != rsKey {
 			t.Fatalf("Expected to find key %v in queue, found %v", rsKey, queueRS)
 		}
+	}
+}
+
+func TestDeletionTimestamp(t *testing.T) {
+	c := clientset.NewForConfigOrDie(&restclient.Config{Host: "", ContentConfig: restclient.ContentConfig{GroupVersion: testapi.Default.GroupVersion()}})
+	labelMap := map[string]string{"foo": "bar"}
+	manager := NewReplicaSetController(c, controller.NoResyncPeriodFunc, 10, 0)
+	manager.podStoreSynced = alwaysReady
+
+	rs := newReplicaSet(1, labelMap)
+	manager.rsStore.Store.Add(rs)
+	rsKey, err := controller.KeyFunc(rs)
+	if err != nil {
+		t.Errorf("Couldn't get key for object %+v: %v", rs, err)
+	}
+	pod := newPodList(nil, 1, api.PodPending, labelMap, rs).Items[0]
+	pod.DeletionTimestamp = &unversioned.Time{time.Now()}
+	manager.expectations.SetExpectations(rsKey, 0, 1)
+
+	// A pod added with a deletion timestamp should decrement deletions, not creations.
+	manager.addPod(&pod)
+
+	queueRC, _ := manager.queue.Get()
+	if queueRC != rsKey {
+		t.Fatalf("Expected to find key %v in queue, found %v", rsKey, queueRC)
+	}
+	manager.queue.Done(rsKey)
+
+	podExp, exists, err := manager.expectations.GetExpectations(rsKey)
+	if !exists || err != nil || !podExp.Fulfilled() {
+		t.Fatalf("Wrong expectations %+v", podExp)
+	}
+
+	// An update from no deletion timestamp to having one should be treated
+	// as a deletion.
+	oldPod := newPodList(nil, 1, api.PodPending, labelMap, rs).Items[0]
+	manager.expectations.SetExpectations(rsKey, 0, 1)
+	manager.updatePod(&oldPod, &pod)
+
+	queueRC, _ = manager.queue.Get()
+	if queueRC != rsKey {
+		t.Fatalf("Expected to find key %v in queue, found %v", rsKey, queueRC)
+	}
+	manager.queue.Done(rsKey)
+
+	podExp, exists, err = manager.expectations.GetExpectations(rsKey)
+	if !exists || err != nil || !podExp.Fulfilled() {
+		t.Fatalf("Wrong expectations %+v", podExp)
+	}
+
+	// An update to the pod (including an update to the deletion timestamp)
+	// should not be counted as a second delete.
+	manager.expectations.SetExpectations(rsKey, 0, 1)
+	oldPod.DeletionTimestamp = &unversioned.Time{time.Now()}
+	manager.updatePod(&oldPod, &pod)
+
+	podExp, exists, err = manager.expectations.GetExpectations(rsKey)
+	if !exists || err != nil || podExp.Fulfilled() {
+		t.Fatalf("Wrong expectations %+v", podExp)
+	}
+
+	// A pod with a non-nil deletion timestamp should also be ignored by the
+	// delete handler, because it's already been counted in the update.
+	manager.deletePod(&pod)
+	podExp, exists, err = manager.expectations.GetExpectations(rsKey)
+	if !exists || err != nil || podExp.Fulfilled() {
+		t.Fatalf("Wrong expectations %+v", podExp)
+	}
+
+	// A pod with a nil timestamp should be counted as a deletion.
+	pod.DeletionTimestamp = nil
+	manager.deletePod(&pod)
+
+	queueRC, _ = manager.queue.Get()
+	if queueRC != rsKey {
+		t.Fatalf("Expected to find key %v in queue, found %v", rsKey, queueRC)
+	}
+	manager.queue.Done(rsKey)
+
+	podExp, exists, err = manager.expectations.GetExpectations(rsKey)
+	if !exists || err != nil || !podExp.Fulfilled() {
+		t.Fatalf("Wrong expectations %+v", podExp)
 	}
 }

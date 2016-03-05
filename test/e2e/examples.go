@@ -33,12 +33,11 @@ import (
 )
 
 const (
-	podListTimeout     = time.Minute
 	serverStartTimeout = podStartTimeout + 3*time.Minute
 )
 
 var _ = Describe("[Feature:Example]", func() {
-	framework := NewFramework("examples")
+	framework := NewDefaultFramework("examples")
 	var c *client.Client
 	var ns string
 	BeforeEach(func() {
@@ -211,31 +210,36 @@ var _ = Describe("[Feature:Example]", func() {
 			controllerYaml := mkpath("cassandra-controller.yaml")
 			nsFlag := fmt.Sprintf("--namespace=%v", ns)
 
-			By("starting service and pod")
+			By("Starting the cassandra service and pod")
 			runKubectlOrDie("create", "-f", serviceYaml, nsFlag)
 			runKubectlOrDie("create", "-f", podYaml, nsFlag)
+
+			Logf("waiting for first cassandra pod")
 			err := waitForPodRunningInNamespace(c, "cassandra", ns)
 			Expect(err).NotTo(HaveOccurred())
 
+			Logf("waiting for thrift listener online")
 			_, err = lookForStringInLog(ns, "cassandra", "cassandra", "Listening for thrift clients", serverStartTimeout)
 			Expect(err).NotTo(HaveOccurred())
 
+			Logf("wait for service")
 			err = waitForEndpoint(c, ns, "cassandra")
 			Expect(err).NotTo(HaveOccurred())
 
-			By("create and scale rc")
+			// Create an RC with n nodes in it.  Each node will then be verified.
+			By("Creating a Cassandra RC")
 			runKubectlOrDie("create", "-f", controllerYaml, nsFlag)
-			err = ScaleRC(c, ns, "cassandra", 2, true)
-			Expect(err).NotTo(HaveOccurred())
-			forEachPod(c, ns, "name", "cassandra", func(pod api.Pod) {
+			forEachPod(c, ns, "app", "cassandra", func(pod api.Pod) {
+				Logf("Verifying pod %v ", pod.Name)
 				_, err = lookForStringInLog(ns, pod.Name, "cassandra", "Listening for thrift clients", serverStartTimeout)
 				Expect(err).NotTo(HaveOccurred())
 				_, err = lookForStringInLog(ns, pod.Name, "cassandra", "Handshaking version", serverStartTimeout)
 				Expect(err).NotTo(HaveOccurred())
 			})
 
+			By("Finding each node in the nodetool status lines")
 			output := runKubectlOrDie("exec", "cassandra", nsFlag, "--", "nodetool", "status")
-			forEachPod(c, ns, "name", "cassandra", func(pod api.Pod) {
+			forEachPod(c, ns, "app", "cassandra", func(pod api.Pod) {
 				if !strings.Contains(output, pod.Status.PodIP) {
 					Failf("Pod ip %s not found in nodetool status", pod.Status.PodIP)
 				}
@@ -337,13 +341,16 @@ var _ = Describe("[Feature:Example]", func() {
 			secretYaml := mkpath("secret.yaml")
 			podYaml := mkpath("secret-pod.yaml")
 			nsFlag := fmt.Sprintf("--namespace=%v", ns)
+			podName := "secret-test-pod"
 
 			By("creating secret and pod")
 			runKubectlOrDie("create", "-f", secretYaml, nsFlag)
 			runKubectlOrDie("create", "-f", podYaml, nsFlag)
+			err := waitForPodNoLongerRunningInNamespace(c, podName, ns)
+			Expect(err).NotTo(HaveOccurred())
 
 			By("checking if secret was read correctly")
-			_, err := lookForStringInLog(ns, "secret-test-pod", "test-container", "value-1", serverStartTimeout)
+			_, err = lookForStringInLog(ns, "secret-test-pod", "test-container", "value-1", serverStartTimeout)
 			Expect(err).NotTo(HaveOccurred())
 		})
 	})
@@ -359,11 +366,13 @@ var _ = Describe("[Feature:Example]", func() {
 
 			By("creating the pod")
 			runKubectlOrDie("create", "-f", podYaml, nsFlag)
+			err := waitForPodNoLongerRunningInNamespace(c, podName, ns)
+			Expect(err).NotTo(HaveOccurred())
 
 			By("checking if name and namespace were passed correctly")
-			_, err := lookForStringInLog(ns, podName, "test-container", fmt.Sprintf("POD_NAMESPACE=%v", ns), serverStartTimeout)
+			_, err = lookForStringInLog(ns, podName, "test-container", fmt.Sprintf("MY_POD_NAMESPACE=%v", ns), serverStartTimeout)
 			Expect(err).NotTo(HaveOccurred())
-			_, err = lookForStringInLog(ns, podName, "test-container", fmt.Sprintf("POD_NAME=%v", podName), serverStartTimeout)
+			_, err = lookForStringInLog(ns, podName, "test-container", fmt.Sprintf("MY_POD_NAME=%v", podName), serverStartTimeout)
 			Expect(err).NotTo(HaveOccurred())
 		})
 	})

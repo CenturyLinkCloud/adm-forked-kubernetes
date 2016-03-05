@@ -28,8 +28,8 @@ import (
 	_ "k8s.io/kubernetes/pkg/apimachinery/registered"
 	"k8s.io/kubernetes/pkg/apis/extensions"
 	"k8s.io/kubernetes/pkg/client/clientset_generated/internalclientset/fake"
+	"k8s.io/kubernetes/pkg/client/restclient"
 	"k8s.io/kubernetes/pkg/client/testing/core"
-	client "k8s.io/kubernetes/pkg/client/unversioned"
 	"k8s.io/kubernetes/pkg/client/unversioned/testclient"
 	"k8s.io/kubernetes/pkg/controller/podautoscaler/metrics"
 	"k8s.io/kubernetes/pkg/runtime"
@@ -62,6 +62,8 @@ type testCase struct {
 	desiredReplicas int
 	// CPU target utilization as a percentage of the requested resources.
 	CPUTarget           int
+	CPUCurrent          int
+	verifyCPUCurrent    bool
 	reportedLevels      []uint64
 	reportedCPURequests []resource.Quantity
 	cmTarget            *extensions.CustomMetricTargetList
@@ -69,6 +71,21 @@ type testCase struct {
 	statusUpdated       bool
 	eventCreated        bool
 	verifyEvents        bool
+}
+
+func (tc *testCase) computeCPUCurrent() {
+	if len(tc.reportedLevels) != len(tc.reportedCPURequests) || len(tc.reportedLevels) == 0 {
+		return
+	}
+	reported := 0
+	for _, r := range tc.reportedLevels {
+		reported += int(r)
+	}
+	requested := 0
+	for _, req := range tc.reportedCPURequests {
+		requested += int(req.MilliValue())
+	}
+	tc.CPUCurrent = 100 * reported / requested
 }
 
 func (tc *testCase) prepareTestClient(t *testing.T) *fake.Clientset {
@@ -80,6 +97,7 @@ func (tc *testCase) prepareTestClient(t *testing.T) *fake.Clientset {
 	tc.scaleUpdated = false
 	tc.statusUpdated = false
 	tc.eventCreated = false
+	tc.computeCPUCurrent()
 
 	fakeClient := &fake.Clientset{}
 	fakeClient.AddReactor("list", "horizontalpodautoscalers", func(action core.Action) (handled bool, ret runtime.Object, err error) {
@@ -170,7 +188,7 @@ func (tc *testCase) prepareTestClient(t *testing.T) *fake.Clientset {
 		return true, obj, nil
 	})
 
-	fakeClient.AddProxyReactor("services", func(action core.Action) (handled bool, ret client.ResponseWrapper, err error) {
+	fakeClient.AddProxyReactor("services", func(action core.Action) (handled bool, ret restclient.ResponseWrapper, err error) {
 		timestamp := time.Now()
 		metrics := heapster.MetricResultList{}
 		for _, level := range tc.reportedLevels {
@@ -198,6 +216,10 @@ func (tc *testCase) prepareTestClient(t *testing.T) *fake.Clientset {
 		assert.Equal(t, hpaName, obj.Name)
 		assert.Equal(t, tc.desiredReplicas, obj.Status.DesiredReplicas)
 		tc.statusUpdated = true
+		if tc.verifyCPUCurrent {
+			assert.NotNil(t, obj.Status.CurrentCPUUtilizationPercentage)
+			assert.Equal(t, tc.CPUCurrent, *obj.Status.CurrentCPUUtilizationPercentage)
+		}
 		return true, obj, nil
 	})
 
@@ -235,6 +257,19 @@ func (tc *testCase) runTest(t *testing.T) {
 	tc.verifyResults(t)
 }
 
+func TestDefaultScaleUp(t *testing.T) {
+	tc := testCase{
+		minReplicas:         2,
+		maxReplicas:         6,
+		initialReplicas:     4,
+		desiredReplicas:     5,
+		verifyCPUCurrent:    true,
+		reportedLevels:      []uint64{900, 950, 950, 1000},
+		reportedCPURequests: []resource.Quantity{resource.MustParse("1.0"), resource.MustParse("1.0"), resource.MustParse("1.0"), resource.MustParse("1.0")},
+	}
+	tc.runTest(t)
+}
+
 func TestScaleUp(t *testing.T) {
 	tc := testCase{
 		minReplicas:         2,
@@ -242,6 +277,7 @@ func TestScaleUp(t *testing.T) {
 		initialReplicas:     3,
 		desiredReplicas:     5,
 		CPUTarget:           30,
+		verifyCPUCurrent:    true,
 		reportedLevels:      []uint64{300, 500, 700},
 		reportedCPURequests: []resource.Quantity{resource.MustParse("1.0"), resource.MustParse("1.0"), resource.MustParse("1.0")},
 	}
@@ -267,6 +303,19 @@ func TestScaleUpCM(t *testing.T) {
 	tc.runTest(t)
 }
 
+func TestDefaultScaleDown(t *testing.T) {
+	tc := testCase{
+		minReplicas:         2,
+		maxReplicas:         6,
+		initialReplicas:     5,
+		desiredReplicas:     4,
+		verifyCPUCurrent:    true,
+		reportedLevels:      []uint64{400, 500, 600, 700, 800},
+		reportedCPURequests: []resource.Quantity{resource.MustParse("1.0"), resource.MustParse("1.0"), resource.MustParse("1.0"), resource.MustParse("1.0"), resource.MustParse("1.0")},
+	}
+	tc.runTest(t)
+}
+
 func TestScaleDown(t *testing.T) {
 	tc := testCase{
 		minReplicas:         2,
@@ -274,6 +323,7 @@ func TestScaleDown(t *testing.T) {
 		initialReplicas:     5,
 		desiredReplicas:     3,
 		CPUTarget:           50,
+		verifyCPUCurrent:    true,
 		reportedLevels:      []uint64{100, 300, 500, 250, 250},
 		reportedCPURequests: []resource.Quantity{resource.MustParse("1.0"), resource.MustParse("1.0"), resource.MustParse("1.0"), resource.MustParse("1.0"), resource.MustParse("1.0")},
 	}
@@ -354,7 +404,7 @@ func TestZeroReplicas(t *testing.T) {
 	tc.runTest(t)
 }
 
-func TestToFewReplicas(t *testing.T) {
+func TestTooFewReplicas(t *testing.T) {
 	tc := testCase{
 		minReplicas:         3,
 		maxReplicas:         5,
