@@ -98,6 +98,7 @@ func makeError(msg string, code int, chain error) HttpError {
 //// Credentials is returned from the login func, and used by everything else
 type Credentials struct {
 	Username      string
+	Password      string // kept because we need reauth, especially when a token expires
 	AccountAlias  string
 	LocationAlias string // do we need this?
 	BearerToken   string
@@ -119,10 +120,11 @@ func (obj *Credentials) IsValid() bool {
 	return (obj.AccountAlias != "") && (obj.BearerToken != "")
 }
 
-// and no GetBearerToken - it's private within this file
+// and no GetBearerToken or GetPassword - keep them private within this file
 
 func (obj *Credentials) ClearCredentials() { // creds object is useless after this
 	obj.Username = ""
+	obj.Password = ""
 	obj.AccountAlias = ""
 	obj.LocationAlias = ""
 	obj.BearerToken = ""
@@ -136,7 +138,7 @@ func makeErrorOld(content string) error {
 	return errors.New("CLC API: " + content)
 }
 
-var dummyCreds = Credentials{Username: "dummy object passed by login proc and not used",
+var dummyCreds = Credentials{Username: "dummy object passed by login proc and not used", Password: "no password here",
 	AccountAlias: "invalid", LocationAlias: "invalid", BearerToken: "invalid"} // note dummyCreds.IsValid() is true
 
 func GetCredentials(server, uri string, username, password string) (*Credentials, HttpError) {
@@ -159,10 +161,35 @@ func GetCredentials(server, uri string, username, password string) (*Credentials
 
 	return &Credentials{
 		Username:      authresp.Username,
+		Password:      password,
 		AccountAlias:  authresp.AccountAlias,
 		LocationAlias: authresp.LocationAlias,
 		BearerToken:   authresp.BearerToken,
 	}, nil
+}
+
+func ReauthCredentials(creds *Credentials, server, uri string) error {
+	creds.AccountAlias = ""
+	creds.LocationAlias = ""
+	creds.BearerToken = ""
+
+	body := fmt.Sprintf("{\"username\":\"%s\",\"password\":\"%s\"}", creds.Username, creds.Password)
+	b := bytes.NewBufferString(body)
+
+	authresp := AuthLoginResponseJSON{}
+
+	err := invokeHTTP("POST", server, uri, &dummyCreds, b, &authresp)
+	if err != nil {
+		return err
+	}
+
+	fmt.Printf("assigning new token, do this:  export CLC_API_TOKEN=%s\n", authresp.BearerToken)
+
+	creds.AccountAlias = authresp.AccountAlias
+	creds.LocationAlias = authresp.LocationAlias
+	creds.BearerToken = authresp.BearerToken
+
+	return nil
 }
 
 type AuthLoginRequestJSON struct { // actually this is unused, as we simply sprintf the string
@@ -256,6 +283,18 @@ func invokeHTTP(method, server, uri string, creds *Credentials, body io.Reader, 
 
 	if err != nil { // failed HTTP call
 		return makeError("HTTP call failed", HTTP_ERROR_CLIENT, err) // chain the err
+	}
+
+	if resp.StatusCode == 401 { // Unauthorized.  Not a failure yet, perhaps we can reauth
+
+		// nyi where to store auth server/uri?   In the creds object ?
+		ReauthCredentials(creds, "api.ctl.io", "/v2/authentication/login")
+		if creds.IsValid() {
+			req.Header.Del("Authorization")
+			req.Header.Add("Authorization", ("Bearer " + creds.BearerToken))
+
+			resp, err = client.Do(req) // not :=
+		}
 	}
 
 	if (resp.StatusCode < 200) || (resp.StatusCode >= 300) { // Q: do we care to distinguish the various 200-series codes?
