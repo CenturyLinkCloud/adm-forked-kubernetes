@@ -85,7 +85,7 @@ func newCLCCloud(cfg Config) (*CLCCloud, error) {
 
 	return &CLCCloud{
 		clcClient: newClient,
-		clcLB:     makeProviderLB(&newClient),
+		clcLB:     makeProviderLB(newClient),
 	}, nil
 }
 

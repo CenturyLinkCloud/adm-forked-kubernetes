@@ -1,7 +1,7 @@
 package clc
 
 import (
-	"errors"
+	"fmt"
 	"net"
 
 	"github.com/golang/glog"
@@ -24,12 +24,13 @@ import (
 //	}
 
 type clcProviderLB struct {
-	clcClient *CenturyLinkClient // the one owned by CLCCloud
+	// nonpointer because CLC is an interface
+	clcClient CenturyLinkClient // the one owned by CLCCloud
 
 	// any other LB info could go here
 }
 
-func makeProviderLB(clc *CenturyLinkClient) *clcProviderLB {
+func makeProviderLB(clc CenturyLinkClient) *clcProviderLB {
 	if clc == nil {
 		return nil
 	}
@@ -39,21 +40,21 @@ func makeProviderLB(clc *CenturyLinkClient) *clcProviderLB {
 	}
 }
 
-func findLoadBalancerInstance(clcClient *CenturyLinkClient, name, region string) (*LoadBalancerDetails, error) {
+func findLoadBalancerInstance(clcClient CenturyLinkClient, name, region string) (*LoadBalancerDetails, error) {
 	// name is the Kubernetes-assigned name.  EnsureLoadBalancer assigns that to our LoadBalancerDetails.Name
 
-	summaries, err := (*clcClient).listAllLB()
+	summaries, err := clcClient.listAllLB()
 	if err != nil {
 		return nil, err
 	}
 
 	for _, lbSummary := range summaries {
 		if (lbSummary.DataCenter == region) && (lbSummary.Name == name) {
-			return (*clcClient).inspectLB(lbSummary.DataCenter, lbSummary.LBID)
+			return clcClient.inspectLB(lbSummary.DataCenter, lbSummary.LBID)
 		}
 	}
 
-	return nil, errors.New("requested load balancer was not found by name")
+	return nil, fmt.Errorf("requested load balancer was not found: dc=%s, name=%s", region, name)
 }
 
 // GetLoadBalancer returns whether the specified load balancer exists, and if so, what its status is.
@@ -82,12 +83,14 @@ func (clc *clcProviderLB) EnsureLoadBalancer(name, region string,
 
 	lb, e := findLoadBalancerInstance(clc.clcClient, name, region)
 	if e != nil { // make a new LB
-		inf, e := (*clc.clcClient).createLB(region, name, serviceName.String())
+		glog.Info(fmt.Sprintf("clcProviderLB.EnsureLoadBalancer: creating LB, dc=%s, name=%s", region, name))
+		inf, e := clc.clcClient.createLB(region, name, serviceName.String())
 		if e != nil {
 			return nil, e
 		}
 
-		lb, e = (*clc.clcClient).inspectLB(region, inf.LBID)
+		glog.Info(fmt.Sprintf("clcProviderLB.EnsureLoadBalancer: created LB, ID=%s", inf.LBID))
+		lb, e = clc.clcClient.inspectLB(region, inf.LBID)
 		if e != nil {
 			return nil, e
 		}
@@ -135,11 +138,13 @@ func (clc *clcProviderLB) EnsureLoadBalancer(name, region string,
 
 	for _, creationPort := range addPorts {
 		desiredPool := makePoolDetailsFromServicePort(lb.LBID, &creationPort, hosts, affinityType)
-		(*clc.clcClient).createPool(lb.DataCenter, lb.LBID, desiredPool)
+		clc.clcClient.createPool(lb.DataCenter, lb.LBID, desiredPool)
+		glog.Info(fmt.Sprintf("clcProviderLB.EnsureLoadBalancer: created pool, dc=%s, LBID=%s, PoolID=%s", lb.DataCenter, lb.LBID, desiredPool))
 	}
 
 	for _, deletionPool := range deletePools {
-		(*clc.clcClient).deletePool(lb.DataCenter, lb.LBID, deletionPool.PoolID)
+		clc.clcClient.deletePool(lb.DataCenter, lb.LBID, deletionPool.PoolID)
+		glog.Info(fmt.Sprintf("clcProviderLB.EnsureLoadBalancer: deleted pool, dc=%s, LBID=%s, PoolID=%s", lb.DataCenter, lb.LBID, deletionPool.PoolID))
 	}
 
 	for idx, _ := range fromPorts {
@@ -171,7 +176,7 @@ func makePoolDetailsFromServicePort(lbid string, srcPort *api.ServicePort, hosts
 	}
 }
 
-func conformPoolDetails(clcClient *CenturyLinkClient, dc string, desiredPool, existingPool *PoolDetails) (bool, error) {
+func conformPoolDetails(clcClient CenturyLinkClient, dc string, desiredPool, existingPool *PoolDetails) (bool, error) {
 
 	desiredPool.PoolID = existingPool.PoolID
 	desiredPool.LBID = existingPool.LBID
@@ -198,7 +203,8 @@ func conformPoolDetails(clcClient *CenturyLinkClient, dc string, desiredPool, ex
 		return false, nil // no changes made, no error
 	}
 
-	_, e := (*clcClient).updatePool(dc, desiredPool.LBID, desiredPool)
+	_, e := clcClient.updatePool(dc, desiredPool.LBID, desiredPool)
+	glog.Info(fmt.Sprintf("clcProviderLB.EnsureLoadBalancer(conformPoolDetails) updated pool: dc=%s, LBID=%s, PoolID=%s", dc, desiredPool.LBID, desiredPool.PoolID))
 	return true, e
 }
 
@@ -215,7 +221,7 @@ func toStatus(ip string) *api.LoadBalancerStatus {
 // UpdateLoadBalancer updates hosts under the specified load balancer.  For every pool, this rewrites the hosts list.
 // We require that every pool must have a nonempty nodes list, deleting pools if necessary to enforce this.
 func (clc *clcProviderLB) UpdateLoadBalancer(name, region string, hosts []string) error {
-	glog.Info("inside clcProviderLB.UpdateLoadBalancer")
+	glog.Info(fmt.Sprintf("inside clcProviderLB.UpdateLoadBalancer dc=%s, name=%s", region, name))
 
 	lb, e := findLoadBalancerInstance(clc.clcClient, name, region)
 	if e != nil {
@@ -225,7 +231,8 @@ func (clc *clcProviderLB) UpdateLoadBalancer(name, region string, hosts []string
 	for _, pool := range lb.Pools {
 
 		if (hosts == nil) || (len(hosts) == 0) { // must delete pool
-			err := (*clc.clcClient).deletePool(lb.DataCenter, lb.LBID, pool.PoolID)
+			glog.Info(fmt.Sprintf("clcProviderLB.UpdateLoadBalancer deleting pool (no hosts): dc=%s, LBID=%s, PoolID=%s", lb.DataCenter, lb.LBID, pool.PoolID))
+			err := clc.clcClient.deletePool(lb.DataCenter, lb.LBID, pool.PoolID)
 			if err != nil {
 				return err // and punt on any other pools.  This LB is in bad shape now.
 			}
@@ -233,7 +240,8 @@ func (clc *clcProviderLB) UpdateLoadBalancer(name, region string, hosts []string
 		} else { // update hosts in the pool, using port number from the existing hosts
 
 			if (pool.Nodes == nil) || (len(pool.Nodes) == 0) { // no nodes to get targetPort from
-				err := (*clc.clcClient).deletePool(lb.DataCenter, lb.LBID, pool.PoolID)
+				glog.Info(fmt.Sprintf("clcProviderLB.UpdateLoadBalancer deleting pool (no port): dc=%s, LBID=%s, PoolID=%s", lb.DataCenter, lb.LBID, pool.PoolID))
+				err := clc.clcClient.deletePool(lb.DataCenter, lb.LBID, pool.PoolID)
 				if err != nil {
 					return err
 				}
@@ -243,7 +251,8 @@ func (clc *clcProviderLB) UpdateLoadBalancer(name, region string, hosts []string
 				nodelist := makeNodeListFromHosts(hosts, targetPort)
 
 				pool.Nodes = nodelist
-				_, err := (*clc.clcClient).updatePool(lb.DataCenter, lb.LBID, &pool)
+				glog.Info(fmt.Sprintf("clcProviderLB.UpdateLoadBalancer updating pool: dc=%s, LBID=%s, PoolID=%s", lb.DataCenter, lb.LBID, pool.PoolID))
+				_, err := clc.clcClient.updatePool(lb.DataCenter, lb.LBID, &pool)
 				if err != nil {
 					return err
 				}
@@ -278,7 +287,8 @@ func (clc *clcProviderLB) EnsureLoadBalancerDeleted(name, region string) error {
 
 	lb, e := findLoadBalancerInstance(clc.clcClient, name, region)
 	if e == nil {
-		_, e = (*clc.clcClient).deleteLB(lb.DataCenter, lb.LBID)
+		glog.Info(fmt.Sprintf("clcProviderLB.EnsureLoadBalancerDeleted deleting LB: dc=%s, LBID=%s", lb.DataCenter, lb.LBID))
+		_, e = clc.clcClient.deleteLB(lb.DataCenter, lb.LBID)
 	}
 
 	return e // regardless of whether the LB was there previously or not
@@ -287,7 +297,7 @@ func (clc *clcProviderLB) EnsureLoadBalancerDeleted(name, region string) error {
 //////////////// Notes about mapping the Kubernetes data model to the CLC LBAAS
 //
 // (selecting a particular LB)
-// K:name <--> CL:LBID (also CL:LB.LBID)
+// K:name != CL:LBID (also CL:LB.LBID)    (K. assigns its own names, CL assigns LBID)
 // K:region <--> CL:datacenter ID
 //             CL:accountAlias comes from login creds
 //
