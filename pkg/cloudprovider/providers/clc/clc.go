@@ -188,3 +188,24 @@ func (clc *CLCCloud) UpdateLoadBalancer(name, region string, hosts []string) err
 func (clc *CLCCloud) EnsureLoadBalancerDeleted(name, region string) error {
 	return clc.clcLB.EnsureLoadBalancerDeleted(name, region)
 }
+
+// GetZone returns the Zone containing the current failure zone and locality region that the program is running in
+func (clc *CLCCloud) GetZone() (cloudprovider.Zone, error) {
+	return cloudprovider.Zone{}, errors.New("unsupported method")
+}
+
+// ListRoutes lists all managed routes that belong to the specified clusterName
+func (clc *CLCCloud) ListRoutes(clusterName string) ([]*cloudprovider.Route, error) {
+	return nil, errors.New("unsupported method")
+}
+
+// CreateRoute creates the described managed route
+func (clc *CLCCloud) CreateRoute(clusterName string, nameHint string, route *cloudprovider.Route) error {
+	return errors.New("unsupported method")
+}
+
+// DeleteRoute deletes the specified managed route
+// Route should be as returned by ListRoutes
+func (clc *CLCCloud) DeleteRoute(clusterName string, route *cloudprovider.Route) error {
+	return errors.New("unsupported method")
+}
