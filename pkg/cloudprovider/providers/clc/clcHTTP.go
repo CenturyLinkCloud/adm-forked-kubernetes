@@ -25,6 +25,8 @@ import (
 	"io"
 	"net/http"
 	"net/http/httputil"
+
+	"github.com/golang/glog"
 )
 
 //// requests honor this state, no need to pass in with every call
@@ -153,11 +155,12 @@ func GetCredentials(server, uri string, username, password string) (*Credentials
 
 	err := invokeHTTP("POST", server, uri, &dummyCreds, b, &authresp)
 	if err != nil {
+		glog.Info("CLC failed to log in")
 		return nil, err
 	}
 
-	fmt.Printf("assigning new token, do this:  export CLC_API_TOKEN=%s\n", authresp.BearerToken)
-	fmt.Printf("also CLC_API_USERNAME=%s  CLC_API_ACCOUNT=%s  CLC_API_LOCATION=%s\n", authresp.Username, authresp.AccountAlias, authresp.LocationAlias)
+	glog.Info(fmt.Sprintf("assigning new token, do this:  export CLC_API_TOKEN=%s\n", authresp.BearerToken))
+	glog.Info(fmt.Sprintf("also CLC_API_USERNAME=%s  CLC_API_ACCOUNT=%s  CLC_API_LOCATION=%s\n", authresp.Username, authresp.AccountAlias, authresp.LocationAlias))
 
 	return &Credentials{
 		Username:      authresp.Username,

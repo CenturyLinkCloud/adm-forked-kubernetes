@@ -54,6 +54,7 @@ func findLoadBalancerInstance(clcClient CenturyLinkClient, name, region string) 
 		}
 	}
 
+	glog.Info(fmt.Sprintf("CLC: findLoadBalancerInstance failed, dc=%s, name=%s", region, name))
 	return nil, fmt.Errorf("requested load balancer was not found: dc=%s, name=%s", region, name)
 }
 
@@ -86,12 +87,14 @@ func (clc *clcProviderLB) EnsureLoadBalancer(name, region string,
 		glog.Info(fmt.Sprintf("clcProviderLB.EnsureLoadBalancer: creating LB, dc=%s, name=%s", region, name))
 		inf, e := clc.clcClient.createLB(region, name, serviceName.String())
 		if e != nil {
+			glog.Info("clcProviderLB.EnsureLoadBalancer: failed to create new LB")
 			return nil, e
 		}
 
 		glog.Info(fmt.Sprintf("clcProviderLB.EnsureLoadBalancer: created LB, ID=%s", inf.LBID))
 		lb, e = clc.clcClient.inspectLB(region, inf.LBID)
 		if e != nil {
+			glog.Info(fmt.Sprintf("clcProviderLB.EnsureLoadBalancer: could not inspect new LB"))
 			return nil, e
 		}
 	}
@@ -155,6 +158,7 @@ func (clc *clcProviderLB) EnsureLoadBalancer(name, region string,
 		conformPoolDetails(clc.clcClient, lb.DataCenter, desiredPool, existingPool)
 	}
 
+	glog.Info("clcProviderLB.EnsureLoadBalancer returning successfully")
 	return toStatus(lb.PublicIP), nil // ingress is the actual lb.PublicIP, not the one passed in to this func
 }
 
