@@ -39,6 +39,7 @@ const (
 type CLCCloud struct {
 	clcClient CenturyLinkClient // Q: how is this constructed?  Who makes a CLCCloud instance?
 	clcLB     *clcProviderLB    // cloudprovider's LoadBalancer interface is implemented here
+	clcConfig Config            // loaded in readConfig
 }
 
 func init() {
@@ -47,8 +48,10 @@ func init() {
 	cloudprovider.RegisterCloudProvider(ProviderName, func(config io.Reader) (cloudprovider.Interface, error) {
 		cfg, err := readConfig(config)
 		if err != nil {
+			glog.Info("CLC provider could not read config")
 			return nil, err
 		}
+
 		return newCLCCloud(cfg)
 	})
 }
@@ -83,15 +86,24 @@ func newCLCCloud(cfg Config) (*CLCCloud, error) {
 		// nyi return successfully with an empty creds object.  Maybe it'll work later
 	}
 
+	glog.Info("created new CLCCloud instance")
 	return &CLCCloud{
 		clcClient: newClient,
 		clcLB:     makeProviderLB(newClient),
+		clcConfig: cfg,
 	}, nil
 }
 
 // LoadBalancer returns a balancer interface. Also returns true if the interface is supported, false otherwise.
 func (clc *CLCCloud) LoadBalancer() (cloudprovider.LoadBalancer, bool) {
-	return nil, false
+	var ret cloudprovider.LoadBalancer = clc
+	if ret == nil {
+		glog.Info("CLC LoadBalancer call failed to convert types")
+		return ret, true
+	}
+
+	glog.Info("CLC LoadBalancer interface successfully returned")
+	return ret, true
 }
 
 // Instances returns an instances interface. Also returns true if the interface is supported, false otherwise.
@@ -101,7 +113,14 @@ func (clc *CLCCloud) Instances() (cloudprovider.Instances, bool) {
 
 // Zones returns a zones interface. Also returns true if the interface is supported, false otherwise.
 func (clc *CLCCloud) Zones() (cloudprovider.Zones, bool) {
-	return nil, false
+	var ret cloudprovider.Zones = clc
+	if ret == nil {
+		glog.Info("CLC Zones call failed to convert types")
+		return ret, true
+	}
+
+	glog.Info("CLC Zones interface successfully returned")
+	return ret, true
 }
 
 // Clusters returns a clusters interface.  Also returns true if the interface is supported, false otherwise.
@@ -189,10 +208,17 @@ func (clc *CLCCloud) EnsureLoadBalancerDeleted(name, region string) error {
 	return clc.clcLB.EnsureLoadBalancerDeleted(name, region)
 }
 
+//////////////// Kubernetes Zones interface is just this one method
+
 // GetZone returns the Zone containing the current failure zone and locality region that the program is running in
 func (clc *CLCCloud) GetZone() (cloudprovider.Zone, error) {
-	return cloudprovider.Zone{}, errors.New("unsupported method")
+	return cloudprovider.Zone{
+		FailureDomain: clc.clcConfig.Global.Datacenter,
+		Region:        clc.clcConfig.Global.Datacenter,
+	}, nil
 }
+
+////////////////
 
 // ListRoutes lists all managed routes that belong to the specified clusterName
 func (clc *CLCCloud) ListRoutes(clusterName string) ([]*cloudprovider.Route, error) {

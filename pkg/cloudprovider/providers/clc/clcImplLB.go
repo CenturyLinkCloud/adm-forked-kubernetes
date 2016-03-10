@@ -231,46 +231,6 @@ type lbDetailsJSON struct {
 	Pools       ApiPools `json:"pools"`
 }
 
-func nodes_from_json(src *ApiNodes) *[]PoolNode {
-	nNodes := len(*src)
-	if nNodes == 0 {
-		return nil
-	}
-
-	ret := make([]PoolNode, nNodes, nNodes)
-	for idx, srcnode := range *src {
-		ret[idx] = PoolNode{
-			TargetIP:   srcnode.TargetIP,
-			TargetPort: srcnode.TargetPort,
-		}
-	}
-
-	return &ret
-}
-
-func pools_from_json(src *ApiPools, lbid string) *[]PoolDetails {
-	nPools := len(*src)
-	if nPools == 0 {
-		return nil
-	}
-
-	ret := make([]PoolDetails, nPools, nPools)
-	for idx, srcpool := range *src {
-		ret[idx] = PoolDetails{
-			PoolID:       srcpool.PoolID,
-			LBID:         lbid,
-			IncomingPort: srcpool.IncomingPort,
-			Method:       srcpool.Method,
-			Persistence:  srcpool.Persistence,
-			TimeoutMS:    srcpool.TimeoutMS,
-			Mode:         srcpool.Mode,
-			Nodes:        *nodes_from_json(&srcpool.Nodes),
-		}
-	}
-
-	return &ret
-}
-
 func (clc clcImpl) inspectLB(dc, lbid string) (*LoadBalancerDetails, HttpError) {
 
 	uri := fmt.Sprintf("/%s/%s/loadbalancers/%s", clc.creds.GetAccount(), dc, lbid)
@@ -281,6 +241,42 @@ func (clc clcImpl) inspectLB(dc, lbid string) (*LoadBalancerDetails, HttpError) 
 		return nil, err
 	}
 
+	var json_pools []PoolDetails = nil
+	if apiret.Pools != nil {
+		nPools := len(apiret.Pools)
+		json_pools = make([]PoolDetails, nPools, nPools)
+
+		for idx, srcpool := range apiret.Pools {
+			var json_nodes []PoolNode = nil
+			if srcpool.Nodes != nil {
+				nNodes := len(srcpool.Nodes)
+				json_nodes = make([]PoolNode, nNodes, nNodes)
+
+				for idxNode, srcNode := range srcpool.Nodes {
+					json_nodes[idxNode] = PoolNode{
+						TargetIP:   srcNode.TargetIP,
+						TargetPort: srcNode.TargetPort,
+					}
+				}
+			} else {
+				json_nodes = make([]PoolNode, 0, 0)
+			}
+
+			json_pools[idx] = PoolDetails{
+				PoolID:       srcpool.PoolID,
+				LBID:         apiret.LBID,
+				IncomingPort: srcpool.IncomingPort,
+				Method:       srcpool.Method,
+				Persistence:  srcpool.Persistence,
+				TimeoutMS:    srcpool.TimeoutMS,
+				Mode:         srcpool.Mode,
+				Nodes:        json_nodes,
+			}
+		}
+	} else {
+		json_pools = make([]PoolDetails, 0, 0)
+	}
+
 	return &LoadBalancerDetails{
 		LBID:        apiret.LBID,
 		Status:      apiret.Status,
@@ -288,7 +284,7 @@ func (clc clcImpl) inspectLB(dc, lbid string) (*LoadBalancerDetails, HttpError) 
 		Description: apiret.Description,
 		PublicIP:    apiret.PublicIP,
 		DataCenter:  apiret.DataCenter,
-		Pools:       *pools_from_json(&apiret.Pools, apiret.LBID),
+		Pools:       json_pools,
 	}, nil
 }
 
@@ -349,6 +345,21 @@ type PoolEntityJSON struct {
 }
 
 func pool_to_json(pool *PoolDetails) *PoolEntityJSON {
+	var json_nodes []NodeEntityJSON = nil
+	if pool.Nodes != nil {
+		nNodes := len(pool.Nodes)
+		json_nodes = make([]NodeEntityJSON, nNodes, nNodes)
+
+		for idx, srcNode := range pool.Nodes {
+			json_nodes[idx] = NodeEntityJSON{
+				TargetIP:   srcNode.TargetIP,
+				TargetPort: srcNode.TargetPort,
+			}
+		}
+	} else {
+		json_nodes = make([]NodeEntityJSON, 0, 0)
+	}
+
 	return &PoolEntityJSON{
 		PoolID:       pool.PoolID,
 		IncomingPort: pool.IncomingPort,
@@ -356,25 +367,8 @@ func pool_to_json(pool *PoolDetails) *PoolEntityJSON {
 		Persistence:  pool.Persistence,
 		TimeoutMS:    pool.TimeoutMS,
 		Mode:         pool.Mode,
-		Nodes:        *nodes_to_json(&pool.Nodes),
+		Nodes:        json_nodes,
 	}
-}
-
-func nodes_to_json(src *[]PoolNode) *[]NodeEntityJSON {
-	nNodes := len(*src)
-	if nNodes == 0 {
-		return nil
-	}
-
-	ret := make([]NodeEntityJSON, nNodes, nNodes)
-	for idx, srcnode := range *src {
-		ret[idx] = NodeEntityJSON{
-			TargetIP:   srcnode.TargetIP,
-			TargetPort: srcnode.TargetPort,
-		}
-	}
-
-	return &ret
 }
 
 type CreatePoolResponseJSON struct {
