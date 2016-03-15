@@ -186,7 +186,7 @@ func ReauthCredentials(creds *Credentials, server, uri string) error {
 		return err
 	}
 
-	fmt.Printf("assigning new token, do this:  export CLC_API_TOKEN=%s\n", authresp.BearerToken)
+	glog.Info(fmt.Sprintf("assigning new token, do this:  export CLC_API_TOKEN=%s\n", authresp.BearerToken))
 
 	creds.AccountAlias = authresp.AccountAlias
 	creds.LocationAlias = authresp.LocationAlias
@@ -256,7 +256,8 @@ func invokeHTTP(method, server, uri string, creds *Credentials, body io.Reader, 
 	req.Header.Add("Host", server) // the reason we take server and uri separately
 	req.Header.Add("Accept", "application/json")
 
-	if creds != &dummyCreds { // the login proc itself doesn't send an auth header
+	isAuth := (creds == &dummyCreds)
+	if !isAuth { // the login proc itself doesn't send an auth header
 		req.Header.Add("Authorization", ("Bearer " + creds.BearerToken))
 	}
 
@@ -265,8 +266,12 @@ func invokeHTTP(method, server, uri string, creds *Credentials, body io.Reader, 
 	}
 
 	if bDebugRequests {
-		v, _ := httputil.DumpRequestOut(req, true)
-		fmt.Println(string(v))
+		if isAuth {	// avoid writing username/password to the log
+			glog.Info(fmt.Sprintf("auth request: %s", full_url))
+		} else {
+			v, _ := httputil.DumpRequestOut(req, true)
+			glog.Info(string(v))
+		}
 	}
 
 	// this should be the normal code
@@ -281,7 +286,7 @@ func invokeHTTP(method, server, uri string, creds *Credentials, body io.Reader, 
 
 	if bDebugResponses {
 		vv, _ := httputil.DumpResponse(resp, true)
-		fmt.Println(string(vv))
+		glog.Info(string(vv))
 	}
 
 	if err != nil { // failed HTTP call
@@ -304,14 +309,14 @@ func invokeHTTP(method, server, uri string, creds *Credentials, body io.Reader, 
 		// stat := fmt.Sprintf("received HTTP response code %d\n", resp.StatusCode)
 
 		if !bDebugRequests {
-			fmt.Printf("dumping this request, after the fact\n")
+			glog.Info("dumping this request, after the fact")
 			v, _ := httputil.DumpRequestOut(req, true)
-			fmt.Println(string(v))
+			glog.Info(string(v))
 		}
 
 		if !bDebugResponses {
 			vv, _ := httputil.DumpResponse(resp, true)
-			fmt.Println(string(vv))
+			glog.Info(string(vv))
 		}
 
 		return makeError("HTTP call failed", resp.StatusCode, nil)
