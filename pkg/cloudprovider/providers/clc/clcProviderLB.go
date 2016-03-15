@@ -43,6 +43,11 @@ func makeProviderLB(clc CenturyLinkClient) *clcProviderLB {
 	}
 }
 
+func logError(s string) error {
+	glog.Info(fmt.Sprintf("CLC: %s", s))
+	return fmt.Errorf(s)
+}
+
 func findLoadBalancerInstance(clcClient CenturyLinkClient, name, region string, reason string) (*LoadBalancerDetails, error) {
 	// name is the Kubernetes-assigned name.  EnsureLoadBalancer assigns that to our LoadBalancerDetails.Name
 
@@ -120,8 +125,27 @@ func (clc *clcProviderLB) EnsureLoadBalancer(name, region string,
 		}
 	}
 
-	// either way, we now have an LB that answers to (name,region).  Configure it with ports and hosts.
-	existingPoolCount := len(lb.Pools)
+	// either way, we now have an LB that answers to (name,region).  Sanity-check its status
+	if ((lb.Status == "FAILED") || (lb.Status == "DELETED")) {	// definitely failed
+		return nil, logError(fmt.Sprintf("EnsureLoadBalancer: failed, lbid=%s", lb.LBID))
+
+	} else if ((lb.Status == "READY") || (lb.Status == "COMPLETE")) {
+		if lb.PublicIP == "" {
+			return nil, logError(fmt.Sprintf("EnsureLoadBalancer: no publicIP, lbid=%s", lb.LBID))
+		}
+
+		// else success, we have a good status and public IP, fall through to the config code below
+
+	} else if ((lb.Status == "UNDER_CONSTRUCTION") || (lb.Status == "UPDATING_CONFIGURATION") || (lb.Status == "ACTIVE")) {
+		// is returning an error correct here?
+		return nil, logError(fmt.Sprintf("EnsureLoadBalancer: delayed, lbid=%s", lb.LBID))
+
+	} else {	// ??
+		return nil, logError(fmt.Sprintf("EnsureLoadBalancer: bad status, lbid=%s, status=%s", lb.LBID, lb.Status))
+	}
+
+
+	existingPoolCount := len(lb.Pools) // now configure it with ports and hosts.
 	desiredPoolCount := len(ports)
 
 	addPorts := make([]api.ServicePort, 0, desiredPoolCount) // ServicePort specs to make new pools out of
