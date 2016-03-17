@@ -22,9 +22,10 @@ import (
 	"io"
 	"net"
 
+	"encoding/base64"
+
 	"github.com/golang/glog"
 	"github.com/scalingdata/gcfg"
-
 	"k8s.io/kubernetes/pkg/api"
 	"k8s.io/kubernetes/pkg/cloudprovider"
 	"k8s.io/kubernetes/pkg/types"
@@ -56,11 +57,12 @@ func init() {
 	})
 }
 
-// Config holds CenturyLinkCloud configuration parameters
+// Config holds CenturyLinkCloud configuration parameters.  The password is
+// base64-encoded not for security but to escape special characters (#) from gcfg parsing
 type Config struct {
 	Global struct {
 		Username   string `gcfg:"username"`
-		Password   string `gcfg:"password"`
+		Password   string `gcfg:"password-base64"`
 		Alias      string `gcfg:"alias"`
 		Token      string
 		Datacenter string `gcfg:"datacenter"`
@@ -76,6 +78,15 @@ func readConfig(config io.Reader) (Config, error) {
 
 	var cfg Config
 	err := gcfg.ReadInto(&cfg, config)
+	if err != nil {
+		return cfg, err
+	}
+
+	password, err := base64.StdEncoding.DecodeString(cfg.Global.Password)
+	if err != nil {
+		return cfg, err
+	}
+	cfg.Global.Password = string(password)
 	return cfg, err
 }
 
