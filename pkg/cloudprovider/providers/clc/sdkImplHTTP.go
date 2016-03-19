@@ -31,8 +31,8 @@ import (
 
 //// requests honor this state, no need to pass in with every call
 var bCloseConnections = true
-var bDebugRequests = true
-var bDebugResponses = true
+var bDebugRequests = false
+var bDebugResponses = false
 
 func SetCloseConnectionMode(b bool) {
 	bCloseConnections = b
@@ -227,6 +227,17 @@ func marshalledPOST(server, uri string, creds *Credentials, body interface{}, re
 	}
 
 	return invokeHTTP("POST", server, uri, creds, b, ret)
+}
+
+// body must be a json-annotated struct, and is marshalled into the request body
+func marshalledPUT(server, uri string, creds *Credentials, body interface{}, ret interface{}) HttpError {
+	b := new(bytes.Buffer)
+	err := json.NewEncoder(b).Encode(body)
+	if err != nil {
+		return makeError("JSON marshalling failed", HTTP_ERROR_JSON, err)
+	}
+
+	return invokeHTTP("PUT", server, uri, creds, b, ret)
 }
 
 // body is a JSON string, sent directly as the request body

@@ -47,7 +47,13 @@ func implClientFromEnv() (CenturyLinkClient, error) {
 	envToken := os.Getenv("CLC_API_TOKEN")
 
 	if (envUsername == "") || (envAccount == "") || (envLocation == "") || (envToken == "") {
-		return nil, makeErrorOld("CLC auth not set in env")
+		envPassword := os.Getenv("CLC_API_PASSWORD")
+		if (envPassword == "") || (envUsername == "") {
+			fmt.Printf("user=%s, pass=%s, acct=%s, loc=%s, token=%s\n", envUsername, envPassword, envAccount, envLocation, envToken)
+			return nil, makeErrorOld("CLC auth not set in env")
+		}
+
+		return implClientLogin(envUsername, envPassword)
 	}
 
 	newcreds := &Credentials{Username: envUsername, AccountAlias: envAccount, LocationAlias: envLocation, BearerToken: envToken}
@@ -214,8 +220,7 @@ type PoolJSON struct {
 	Persistence  string `json:"persistence"`
 	TimeoutMS    int64  `json:"idleTimeout"`
 	Mode         string `json:"loadBalancingMode"`
-	// healthCheck not modeled
-
+	Health       string `json:"healthCheck"`
 	Nodes ApiNodes `json:"nodes"`
 }
 
@@ -406,7 +411,7 @@ func (clc clcImpl) updatePool(dc, lbid string, newpool *PoolDetails) (*PoolDetai
 		dc, lbid, newpool.PoolID)
 
 	update_req := pool_to_json(newpool) // and ignore async-request return object
-	err := marshalledPOST(clcServer_LB_BETA, uri, clc.creds, update_req, nil)
+	err := marshalledPUT(clcServer_LB_BETA, uri, clc.creds, update_req, nil)
 	if err != nil {
 		return nil, err
 	}
