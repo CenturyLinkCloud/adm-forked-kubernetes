@@ -17,6 +17,7 @@ limitations under the License.
 package clc
 
 import (
+	"strings"
 	"testing"
 
 	"k8s.io/kubernetes/pkg/cloudprovider"
@@ -45,4 +46,28 @@ func checkInstances(provider cloudprovider.Instances) {
 func TestInstances(t *testing.T) {
 	clc := &CLCCloud{}
 	checkInstances(clc)
+}
+
+func TestReadConfig(t *testing.T) {
+	_, err := readConfig(nil)
+	if err == nil {
+		t.Errorf("fail on nil config: %s", err)
+	}
+
+	cfg, err := readConfig(strings.NewReader(`
+[Global]
+alias =
+datacenter = VA1
+username = admin
+password-base64 = cGE1NXcwcmQ=
+`))
+	if err != nil {
+		t.Fatalf("Error found with valid configuration: %s", err)
+	}
+	if cfg.Global.Username != "admin" {
+		t.Errorf("incorrect username: %s", cfg.Global.Username)
+	}
+	if cfg.Global.Password != "pa55w0rd" {
+		t.Errorf("incorrect base64-decoded password: %s", cfg.Global.Password)
+	}
 }
