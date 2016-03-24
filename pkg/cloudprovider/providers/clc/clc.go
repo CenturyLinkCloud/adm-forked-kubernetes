@@ -38,7 +38,7 @@ const (
 
 // CLCCloud is an implementation of Interface, LoadBalancer and Instances for CenturyLinkCloud.
 type CLCCloud struct {
-	clcClient CenturyLinkClient // Q: how is this constructed?  Who makes a CLCCloud instance?
+	clcClient CenturyLinkClient
 	clcLB     *clcProviderLB    // cloudprovider's LoadBalancer interface is implemented here
 	clcConfig Config            // loaded in readConfig
 }
@@ -49,11 +49,20 @@ func init() {
 	cloudprovider.RegisterCloudProvider(ProviderName, func(config io.Reader) (cloudprovider.Interface, error) {
 		cfg, err := readConfig(config)
 		if err != nil {
-			glog.Info("CLC provider could not read config")
+			glog.Info(fmt.Sprintf("CLC provider could not read config: err=%s", err))
 			return nil, err
 		}
 
-		return newCLCCloud(cfg)
+		newClient := makeCenturyLinkClient()
+
+		newCloud := CLCCloud {
+			clcClient: newClient,
+			clcLB: makeProviderLB(newClient),
+			clcConfig: cfg,
+		}
+
+		newClient.GetCreds().CredsLogin(cfg.Global.Username, cfg.Global.Password)	// try the login, but accept that it may fail
+		return &newCloud,nil
 	})
 }
 
@@ -72,7 +81,7 @@ type Config struct {
 
 func readConfig(config io.Reader) (Config, error) {
 	if config == nil {
-		err := fmt.Errorf("no CenturyLinkCloud provider config file given")
+		err := clcError("no CenturyLinkCloud provider config file given")
 		return Config{}, err
 	}
 
@@ -86,23 +95,23 @@ func readConfig(config io.Reader) (Config, error) {
 	if err != nil {
 		return cfg, err
 	}
+
 	cfg.Global.Password = string(password)
 	return cfg, err
 }
 
+// Consider: either merge this code up into init, or extract the func declared there into a named fn
 func newCLCCloud(cfg Config) (*CLCCloud, error) {
-	newClient, error := ClientLogin(cfg.Global.Username, cfg.Global.Password)
-	if error != nil {
-		return &CLCCloud{}, error
-		// nyi return successfully with an empty creds object.  Maybe it'll work later
+	newClient := makeCenturyLinkClient()
+
+	newCloud := CLCCloud {
+		clcClient: newClient,
+		clcLB: makeProviderLB(newClient),
+		clcConfig: cfg,
 	}
 
-	glog.Info("created new CLCCloud instance")
-	return &CLCCloud{
-		clcClient: newClient,
-		clcLB:     makeProviderLB(newClient),
-		clcConfig: cfg,
-	}, nil
+	newClient.GetCreds().CredsLogin(cfg.Global.Username, cfg.Global.Password)	// try the login, but accept that it may fail
+	return &newCloud, nil
 }
 
 // LoadBalancer returns a balancer interface. Also returns true if the interface is supported, false otherwise.

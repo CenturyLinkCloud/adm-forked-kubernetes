@@ -18,7 +18,6 @@ package clc
 
 import (
 	"fmt"
-	"os"
 	"strings"
 )
 
@@ -27,76 +26,23 @@ var clcServer_API_V2 string = "api.ctl.io"               // URL form  https://ap
 var clcServer_LB_BETA string = "api.loadbalancer.ctl.io" // URL form  https://api.loadbalancer.ctl.io/<accountAlias>/<datacenter>/loadbalancers
 
 //// auth methods
-func implClientLogin(username, password string) (CenturyLinkClient, error) {
-
-	newcreds, err := GetCredentials(clcServer_API_V2, "/v2/authentication/login", username, password)
-	if err != nil {
-		return nil, err
+func implMakeCLC() CenturyLinkClient {
+	return clcImpl {
+		creds: MakeEmptyCreds(clcServer_API_V2, "/v2/authentication/login"),
 	}
-
-	return clcImpl{
-		creds: newcreds,
-	}, nil
 }
 
-func implClientFromEnv() (CenturyLinkClient, error) {
-
-	envUsername := os.Getenv("CLC_API_USERNAME")
-	envAccount := os.Getenv("CLC_API_ACCOUNT")
-	envLocation := os.Getenv("CLC_API_LOCATION")
-	envToken := os.Getenv("CLC_API_TOKEN")
-
-	if (envUsername == "") || (envAccount == "") || (envLocation == "") || (envToken == "") {
-		envPassword := os.Getenv("CLC_API_PASSWORD")
-		if (envPassword == "") || (envUsername == "") {
-			fmt.Printf("user=%s, pass=%s, acct=%s, loc=%s, token=%s\n", envUsername, envPassword, envAccount, envLocation, envToken)
-			return nil, makeErrorOld("CLC auth not set in env")
-		}
-
-		return implClientLogin(envUsername, envPassword)
-	}
-
-	newcreds := &Credentials{Username: envUsername, AccountAlias: envAccount, LocationAlias: envLocation, BearerToken: envToken}
-	return clcImpl{creds: newcreds}, nil
-}
 
 //// clcImpl is the internal layer that knows what HTTP calls to make
 
 type clcImpl struct { // implements CenturyLinkClient
-	creds *Credentials
+	creds Credentials		// make it once, never reassign it
 }
 
-func (clc clcImpl) logout() {
-	if clc.creds != nil {
-		clc.creds.ClearCredentials()
-		clc.creds = nil
-	}
+func (clc clcImpl) GetCreds() Credentials {
+	return clc.creds
 }
 
-func (clc clcImpl) hasCredentials() bool {
-	if clc.creds != nil {
-		return clc.creds.IsValid()
-	}
-
-	return false
-}
-
-// inconsistent style - are methods supposed to start with capital or not?
-func (clc clcImpl) getUsername() string {
-	if clc.creds != nil {
-		return clc.creds.GetUsername()
-	}
-
-	return ""
-}
-
-func (clc clcImpl) getAccountAlias() string {
-	if clc.creds != nil {
-		return clc.creds.GetAccount()
-	}
-
-	return ""
-}
 
 //////////////// clc method: listAllDC()
 
@@ -110,7 +56,7 @@ func (clc clcImpl) listAllDC() ([]DataCenterName, error) {
 	uri := fmt.Sprintf("/v2/datacenters/%s", clc.creds.GetAccount())
 	dcret := make([]*dcNamesJSON, 0)
 
-	err := simpleGET(clcServer_API_V2, uri, clc.creds, &dcret)
+	_,err := simpleGET(clcServer_API_V2, uri, clc.creds, &dcret)
 	if err != nil {
 		return nil, err
 	}
@@ -147,7 +93,7 @@ func (clc clcImpl) listAllLB() ([]LoadBalancerSummary, error) {
 	uri := fmt.Sprintf("/%s/loadbalancers", clc.creds.GetAccount())
 	apiret := &lbListingWrapperJSON{}
 
-	err := simpleGET(clcServer_LB_BETA, uri, clc.creds, &apiret)
+	_,err := simpleGET(clcServer_LB_BETA, uri, clc.creds, &apiret)
 	if err != nil {
 		return nil, err
 	}
@@ -192,13 +138,14 @@ func (clc clcImpl) createLB(dc string, lbname string, desc string) (*LoadBalance
 
 	body := fmt.Sprintf("{ \"name\":\"%s\", \"description\":\"%s\" }", lbname, desc)
 
-	err := simplePOST(clcServer_LB_BETA, uri, clc.creds, body, apiret)
+	_,err := simplePOST(clcServer_LB_BETA, uri, clc.creds, body, apiret)
 
 	if err != nil {
 		return nil, err
 	}
 
 	return &LoadBalancerCreationInfo{
+		DataCenter: dc,
 		LBID:        findLinkLB(&apiret.Links, "loadbalancer"),
 		RequestTime: apiret.RequestDate,
 	}, nil
@@ -236,12 +183,12 @@ type lbDetailsJSON struct {
 	Pools       ApiPools `json:"pools"`
 }
 
-func (clc clcImpl) inspectLB(dc, lbid string) (*LoadBalancerDetails, HttpError) {
+func (clc clcImpl) inspectLB(dc, lbid string) (*LoadBalancerDetails, error) {
 
 	uri := fmt.Sprintf("/%s/%s/loadbalancers/%s", clc.creds.GetAccount(), dc, lbid)
 	apiret := &lbDetailsJSON{}
 
-	err := simpleGET(clcServer_LB_BETA, uri, clc.creds, apiret)
+	_,err := simpleGET(clcServer_LB_BETA, uri, clc.creds, apiret)
 	if err != nil {
 		return nil, err
 	}
@@ -320,16 +267,16 @@ func (clc clcImpl) deleteLB(dc, lbid string) (bool, error) {
 	uri := fmt.Sprintf("/%s/%s/loadbalancers/%s", clc.creds.GetAccount(), dc, lbid)
 	apiret := &lbDeleteJSON{}
 
-	err := simpleDELETE(clcServer_LB_BETA, uri, clc.creds, apiret)
+	code, err := simpleDELETE(clcServer_LB_BETA, uri, clc.creds, apiret)
 	if err == nil { // ordinary success, LB was deleted
 		return true, nil
 	}
 
-	if err.Code() == 404 { // was no such LB, which is the goal of a delete.  Call it success
+	if code == 404 { // was no such LB, which is the goal of a delete.  Call it success
 		return false, nil // err=nil is what designates success, boolean return is how we got there
 	}
 
-	return false, err
+	return false, err  // bool return is meaningless, we may or may not have the LB
 }
 
 //////////////// clc method: createPool()
@@ -385,24 +332,30 @@ type CreatePoolResponseJSON struct {
 	Links          ApiLinks `json:"links"` // Q: does the marshaling work if all we include is this one field?  All we need is links[rel="pool"].resourceID
 }
 
-func (clc clcImpl) createPool(dc, lbid string, newpool *PoolDetails) (*PoolDetails, error) {
-
+func (clc clcImpl) createPool(dc, lbid string, newpool *PoolDetails) (*PoolCreationInfo, error) {
 	uri := fmt.Sprintf("/%s/%s/loadbalancers/%s/pools", clc.creds.GetAccount(), dc, lbid)
 	pool_req := pool_to_json(newpool)
 
 	pool_resp := &CreatePoolResponseJSON{}
-	err := marshalledPOST(clcServer_LB_BETA, uri, clc.creds, pool_req, pool_resp)
+	_,err := marshalledPOST(clcServer_LB_BETA, uri, clc.creds, pool_req, pool_resp)
 	if err != nil {
 		return nil, err
 	}
 
 	poolID := findLinkLB(&pool_resp.Links, "pool")
 	if poolID == "" {
-		return nil, makeErrorOld("could not determine ID of new pool")
+		return nil, clcError("could not determine ID of new pool")
 	}
 
-	return clc.inspectPool(dc, lbid, poolID)
+	// but clc.inspectPool fails if executed this quickly.  Return a PoolCreationInfo instead
+	return &PoolCreationInfo {
+		DataCenter: dc,
+		LBID: lbid,
+		PoolID: poolID,
+		RequestTime: pool_resp.RequestDate,
+	}, nil
 }
+
 
 //////////////// clc method: updatePool()
 func (clc clcImpl) updatePool(dc, lbid string, newpool *PoolDetails) (*PoolDetails, error) {
@@ -411,7 +364,7 @@ func (clc clcImpl) updatePool(dc, lbid string, newpool *PoolDetails) (*PoolDetai
 		dc, lbid, newpool.PoolID)
 
 	update_req := pool_to_json(newpool) // and ignore async-request return object
-	err := marshalledPUT(clcServer_LB_BETA, uri, clc.creds, update_req, nil)
+	_,err := marshalledPUT(clcServer_LB_BETA, uri, clc.creds, update_req, nil)
 	if err != nil {
 		return nil, err
 	}
@@ -425,7 +378,7 @@ func (clc clcImpl) deletePool(dc, lbid string, poolID string) error {
 	uri := fmt.Sprintf("/%s/%s/loadbalancers/%s/pools/%s", clc.creds.GetAccount(),
 		dc, lbid, poolID)
 
-	err := simpleDELETE(clcServer_LB_BETA, uri, clc.creds, nil)
+	_, err := simpleDELETE(clcServer_LB_BETA, uri, clc.creds, nil)
 	return err // no other return body
 }
 
@@ -445,7 +398,7 @@ func (clc clcImpl) inspectPool(dc, lbid, poolid string) (*PoolDetails, error) {
 		}
 	}
 
-	return nil, makeErrorOld("pool not found")
+	return nil, clcError("pool not found")
 }
 
 //////////////// end clc methods

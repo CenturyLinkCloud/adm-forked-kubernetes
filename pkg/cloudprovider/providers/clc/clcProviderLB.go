@@ -27,7 +27,7 @@ import (
 //	}
 
 type clcProviderLB struct {
-	// nonpointer because CLC is an interface
+	// nonpointer because CenturyLinkClient is an interface
 	clcClient CenturyLinkClient // the one owned by CLCCloud
 
 	// any other LB info could go here
@@ -45,11 +45,6 @@ func makeProviderLB(clc CenturyLinkClient) *clcProviderLB {
 	return &clcProviderLB{
 		clcClient: clc,
 	}
-}
-
-func logError(s string) error {
-	glog.Info(fmt.Sprintf("CLC: %s", s))
-	return fmt.Errorf(s)
 }
 
 // returns LBDetails, or nil if the name was simply not found, or error if something failed
@@ -129,21 +124,21 @@ func (clc *clcProviderLB) EnsureLoadBalancer(name, region string,
 
 	// either way, we now have an LB that answers to (name,region).  Sanity-check its status
 	if (lb.Status == "FAILED") || (lb.Status == "DELETED") { // definitely failed
-		return nil, logError(fmt.Sprintf("EnsureLoadBalancer: failed, lbid=%s", lb.LBID))
+		return nil, clcError(fmt.Sprintf("EnsureLoadBalancer: failed, lbid=%s", lb.LBID))
 
 	} else if (lb.Status == "READY") || (lb.Status == "COMPLETE") {
 		if lb.PublicIP == "" {
-			return nil, logError(fmt.Sprintf("EnsureLoadBalancer: no publicIP, lbid=%s", lb.LBID))
+			return nil, clcError(fmt.Sprintf("EnsureLoadBalancer: no publicIP, lbid=%s", lb.LBID))
 		}
 
 		// else success, we have a good status and public IP, fall through to the config code below
 
 	} else if (lb.Status == "UNDER_CONSTRUCTION") || (lb.Status == "UPDATING_CONFIGURATION") || (lb.Status == "ACTIVE") {
 		// is returning an error correct here?
-		return nil, logError(fmt.Sprintf("EnsureLoadBalancer: delayed, lbid=%s", lb.LBID))
+		return nil, clcError(fmt.Sprintf("EnsureLoadBalancer: delayed, lbid=%s", lb.LBID))
 
 	} else { // ??
-		return nil, logError(fmt.Sprintf("EnsureLoadBalancer: bad status, lbid=%s, status=%s", lb.LBID, lb.Status))
+		return nil, clcError(fmt.Sprintf("EnsureLoadBalancer: bad status, lbid=%s, status=%s", lb.LBID, lb.Status))
 	}
 
 	existingPoolCount := len(lb.Pools) // now configure it with ports and hosts.
@@ -294,7 +289,7 @@ func (clc *clcProviderLB) UpdateLoadBalancer(name, region string, hosts []string
 	}
 
 	if lb == nil {
-		return logError(fmt.Sprintf("UpdateLoadBalancer could not find instance: dc=%s, name=%s", region, name))
+		return clcError(fmt.Sprintf("UpdateLoadBalancer could not find instance: dc=%s, name=%s", region, name))
 	}
 
 	for _, pool := range lb.Pools {
@@ -359,7 +354,7 @@ func (clc *clcProviderLB) EnsureLoadBalancerDeleted(name, region string) error {
 
 	lb, e := findLoadBalancerInstance(clc.clcClient, name, region, "K8S.LB.EnsureLoadBalancerDeleted")
 	if e != nil {
-		return logError("EnsureLoadBalancerDeleted failed to search for instances")
+		return clcError("EnsureLoadBalancerDeleted failed to search for instances")
 	}
 
 	if lb == nil {

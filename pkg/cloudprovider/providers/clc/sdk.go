@@ -41,8 +41,15 @@ type PoolDetails struct {
 	Nodes []PoolNode
 }
 
-// Q: createLB to return this?  Or to just invoke inspectLB and return LBDetails?
+type PoolCreationInfo struct {
+	DataCenter string
+	LBID string
+	PoolID string
+	RequestTime int64
+}
+
 type LoadBalancerCreationInfo struct {
+	DataCenter string
 	LBID        string // the ID should be enough.  This is only a struct so that we have a place to put new fields later if desired
 	RequestTime int64  // per the server-side clock, whose synchronization with any other clock is unknown
 }
@@ -66,11 +73,7 @@ type LoadBalancerSummary struct {
 }
 
 type CenturyLinkClient interface {
-	// authentication
-	logout()
-	hasCredentials() bool
-	getUsername() string
-	getAccountAlias() string
+	GetCreds() Credentials 	// delegate auth interface 
 
 	// datacenter identification
 	listAllDC() ([]DataCenterName, error)
@@ -78,19 +81,16 @@ type CenturyLinkClient interface {
 	// load balancers
 	createLB(datacenter string, name string, description string) (*LoadBalancerCreationInfo, error)
 	deleteLB(dc, lbid string) (bool, error)
-	inspectLB(dc, lbid string) (*LoadBalancerDetails, HttpError)
+	inspectLB(dc, lbid string) (*LoadBalancerDetails, error)
 	listAllLB() ([]LoadBalancerSummary, error)
 
 	inspectPool(dc, lbid, poolid string) (*PoolDetails, error)
-	createPool(dc, lbid string, newpool *PoolDetails) (*PoolDetails, error) // send in newpool.PoolID=nil, the return will have it filled in
+	createPool(dc, lbid string, newpool *PoolDetails) (*PoolCreationInfo, error) // send in newpool.PoolID=nil, the return will have it filled in
 	updatePool(dc, lbid string, newpool *PoolDetails) (*PoolDetails, error) // send in newpool.PoolID, that's the pool whose details to update
 	deletePool(dc, lbid string, poolID string) error
 }
 
-func ClientLogin(username, password string) (CenturyLinkClient, error) {
-	return implClientLogin(username, password)
+func makeCenturyLinkClient() CenturyLinkClient {
+	return implMakeCLC();	// no creds, useless until auth is done, but never fails
 }
 
-func ClientReload() (CenturyLinkClient, error) {
-	return implClientFromEnv()
-}
