@@ -20,7 +20,7 @@ import (
 	"bytes"
 	tls "crypto/tls"
 	"encoding/json"
-	"errors"
+
 	"fmt"
 	"io"
 	"net/http"
@@ -31,8 +31,8 @@ import (
 
 //// requests honor this state, no need to pass in with every call
 var bCloseConnections = true
-var bDebugRequests = false
-var bDebugResponses = false
+var bDebugRequests = true
+var bDebugResponses = true	// turn these back off after exploring whether healthCheck works correctly
 
 func SetCloseConnectionMode(b bool) {
 	bCloseConnections = b
@@ -56,239 +56,90 @@ const ( // HttpError codes when the error occurred here, not in the remote call.
 	HTTP_ERROR_JSON      = 4
 )
 
-type HttpError interface {
-	Error() string // extends Error
-	Code() int     // a real HTTP response code, or one of the 0xx codes above
-	Chain() error
-}
-
-type implHttpError struct {
-	errMessage string
-	errCode    int
-	errChain   error
-}
-
-func (e implHttpError) Error() string {
-	return e.errMessage
-}
-
-func (e implHttpError) Code() int {
-	return e.errCode
-}
-
-func (e implHttpError) Chain() error {
-	return e.errChain
-}
-
-// should fail to compile, now that HttpError is an interface (hence pointer type) we should return &implHttpError
-func makeError(msg string, code int, chain error) HttpError {
-	if msg == "" { // msg required
-		msg = "<HttpError, message text not available>"
-	}
-
-	if code == 0 {
-		code = HTTP_ERROR_UNKNOWN
-	}
-
-	return implHttpError{
-		errMessage: msg,
-		errCode:    code,
-		errChain:   chain, // often nil
-	}
-}
-
-//// Credentials is returned from the login func, and used by everything else
-type Credentials struct {
-	Username      string
-	Password      string // kept because we need reauth, especially when a token expires
-	AccountAlias  string
-	LocationAlias string // do we need this?
-	BearerToken   string
-}
-
-func (obj *Credentials) GetUsername() string {
-	return obj.Username
-}
-
-func (obj *Credentials) GetAccount() string {
-	return obj.AccountAlias
-}
-
-func (obj *Credentials) GetLocation() string {
-	return obj.LocationAlias
-}
-
-func (obj *Credentials) IsValid() bool {
-	return (obj.AccountAlias != "") && (obj.BearerToken != "")
-}
-
-// and no GetBearerToken or GetPassword - keep them private within this file
-
-func (obj *Credentials) ClearCredentials() { // creds object is useless after this
-	obj.Username = ""
-	obj.Password = ""
-	obj.AccountAlias = ""
-	obj.LocationAlias = ""
-	obj.BearerToken = ""
-}
-
-func makeErrorOld(content string) error {
-	if content == "" {
-		content = "<error text not available>"
-	}
-
-	return errors.New("CLC API: " + content)
-}
-
-var dummyCreds = Credentials{Username: "dummy object passed by login proc and not used", Password: "no password here",
-	AccountAlias: "invalid", LocationAlias: "invalid", BearerToken: "invalid"} // note dummyCreds.IsValid() is true
-
-func GetCredentials(server, uri string, username, password string) (*Credentials, HttpError) {
-	if (username == "") || (password == "") {
-		return nil, makeError("username and/or password not provided", HTTP_ERROR_NOCREDS, nil)
-	}
-
-	body := fmt.Sprintf("{\"username\":\"%s\",\"password\":\"%s\"}", username, password)
-	b := bytes.NewBufferString(body)
-
-	authresp := AuthLoginResponseJSON{}
-
-	err := invokeHTTP("POST", server, uri, &dummyCreds, b, &authresp)
-	if err != nil {
-		glog.Info("CLC failed to log in")
-		return nil, err
-	}
-
-	glog.Info(fmt.Sprintf("assigning new token, do this:  export CLC_API_TOKEN=%s\n", authresp.BearerToken))
-	glog.Info(fmt.Sprintf("also CLC_API_USERNAME=%s  CLC_API_ACCOUNT=%s  CLC_API_LOCATION=%s\n", authresp.Username, authresp.AccountAlias, authresp.LocationAlias))
-
-	return &Credentials{
-		Username:      authresp.Username,
-		Password:      password,
-		AccountAlias:  authresp.AccountAlias,
-		LocationAlias: authresp.LocationAlias,
-		BearerToken:   authresp.BearerToken,
-	}, nil
-}
-
-func ReauthCredentials(creds *Credentials, server, uri string) error {
-	creds.AccountAlias = ""
-	creds.LocationAlias = ""
-	creds.BearerToken = ""
-
-	body := fmt.Sprintf("{\"username\":\"%s\",\"password\":\"%s\"}", creds.Username, creds.Password)
-	b := bytes.NewBufferString(body)
-
-	authresp := AuthLoginResponseJSON{}
-
-	err := invokeHTTP("POST", server, uri, &dummyCreds, b, &authresp)
-	if err != nil {
-		return err
-	}
-
-	glog.Info(fmt.Sprintf("assigning new token, do this:  export CLC_API_TOKEN=%s\n", authresp.BearerToken))
-
-	creds.AccountAlias = authresp.AccountAlias
-	creds.LocationAlias = authresp.LocationAlias
-	creds.BearerToken = authresp.BearerToken
-
-	return nil
-}
-
-type AuthLoginRequestJSON struct { // actually this is unused, as we simply sprintf the string
-	Username string `json:"username"`
-	Password string `json:"password"`
-}
-
-type AuthLoginResponseJSON struct {
-	Username      string   `json:"username"`
-	AccountAlias  string   `json:"accountAlias"`
-	LocationAlias string   `json:"locationAlias"`
-	Roles         []string `json:"roles"`
-	BearerToken   string   `json:"bearerToken"`
-}
-
 // no request message body sent.  Response body returned if ret is not nil
-func simpleGET(server, uri string, creds *Credentials, ret interface{}) HttpError {
+func simpleGET(server, uri string, creds Credentials, ret interface{}) (int, error) {
 	return invokeHTTP("GET", server, uri, creds, nil, ret)
 }
 
-// no request message body sent.  Response body returned if ret is not nil
-func simpleDELETE(server, uri string, creds *Credentials, ret interface{}) HttpError {
+// no request message body sent.  Response body returned if ret is not nil (typically it is nil).
+func simpleDELETE(server, uri string, creds Credentials, ret interface{}) (int, error) {
 	return invokeHTTP("DELETE", server, uri, creds, nil, ret)
 }
 
 // body must be a json-annotated struct, and is marshalled into the request body
-func marshalledPOST(server, uri string, creds *Credentials, body interface{}, ret interface{}) HttpError {
+func marshalledPOST(server, uri string, creds Credentials, body interface{}, ret interface{}) (int, error) {
 	b := new(bytes.Buffer)
 	err := json.NewEncoder(b).Encode(body)
 	if err != nil {
-		return makeError("JSON marshalling failed", HTTP_ERROR_JSON, err)
+		return HTTP_ERROR_JSON, clcError(fmt.Sprintf("JSON marshalling failed, err=%s", err.Error()))
 	}
 
 	return invokeHTTP("POST", server, uri, creds, b, ret)
 }
 
 // body must be a json-annotated struct, and is marshalled into the request body
-func marshalledPUT(server, uri string, creds *Credentials, body interface{}, ret interface{}) HttpError {
+func marshalledPUT(server, uri string, creds Credentials, body interface{}, ret interface{}) (int, error) {
 	b := new(bytes.Buffer)
 	err := json.NewEncoder(b).Encode(body)
 	if err != nil {
-		return makeError("JSON marshalling failed", HTTP_ERROR_JSON, err)
+		return HTTP_ERROR_JSON, clcError(fmt.Sprintf("JSON marshalling failed, err=%s", err.Error()))
 	}
 
 	return invokeHTTP("PUT", server, uri, creds, b, ret)
 }
 
 // body is a JSON string, sent directly as the request body
-func simplePOST(server, uri string, creds *Credentials, body string, ret interface{}) HttpError {
+func simplePOST(server, uri string, creds Credentials, body string, ret interface{}) (int, error) {
 	b := bytes.NewBufferString(body)
 	return invokeHTTP("POST", server, uri, creds, b, ret)
 }
+
 
 // method to be "GET", "POST", etc.
 // server name "api.ctl.io" or "api.loadbalancer.ctl.io"
 // uri always starts with /   (we assemble https://<server><uri>)
 // creds required for anything except the login call
 // body may be be nil
-func invokeHTTP(method, server, uri string, creds *Credentials, body io.Reader, ret interface{}) HttpError {
+
+// return int is HTTP response code.  Or an HTTP_ERROR series-000 value, especially if no request was made
+// So the possible returns are: (HTTP_ERROR_XXX, err) (non-2xx, err), (2xx, json-err), (2xx, nil)
+//      caller couldn't marshal a payload                                                        (0, err)
+// 		failed to issue a request.  Does anyone really need the integer code of why not?         (0, err)
+//		HTTP response had a failure code.  Retain this code, a 404 might not really be an error. (4xx, err)
+//		Success from the HTTP standpoint, but we couldn't unmarshal the JSON response payload    (2xx, err)
+//		Success all the way.  Return payload if any is in the ret interface                      (2xx, nil)
+// Caller can still just look for (err != nil) - the main reason for the code is that 404 might not be an err for DELETE calls
+
+func invokeHTTP(method, server, uri string, creds Credentials, body io.Reader, ret interface{}) (int, error) {
 	if (creds == nil) || !creds.IsValid() {
-		return makeError("username and/or password not provided", HTTP_ERROR_NOCREDS, nil)
+		return HTTP_ERROR_NOCREDS, clcError("username and/or password not provided")
 	}
 
 	full_url := ("https://" + server + uri)
 	req, err := http.NewRequest(method, full_url, body)
 	if err != nil {
-		return makeError("could not create HTTP request for "+full_url, HTTP_ERROR_NOREQUEST, err)
+		return HTTP_ERROR_NOREQUEST, err
 	} else if body != nil {
 		req.Header.Add("Content-Type", "application/json") // incoming body to be a marshaled object already
 	}
 
 	req.Header.Add("Host", server) // the reason we take server and uri separately
 	req.Header.Add("Accept", "application/json")
-
-	isAuth := (creds == &dummyCreds)
-	if !isAuth { // the login proc itself doesn't send an auth header
-		req.Header.Add("Authorization", ("Bearer " + creds.BearerToken))
-	}
+	creds.AddAuthHeader(req)
 
 	if bCloseConnections {
 		req.Header.Add("Connection", "close")
 	}
 
-	if bDebugRequests {
-		if isAuth {	// avoid writing username/password to the log
-			glog.Info(fmt.Sprintf("auth request: %s", full_url))
-		} else {
-			v, _ := httputil.DumpRequestOut(req, true)
-			glog.Info(string(v))
-		}
+	if bDebugRequests {		// do not call invokeHTTP to perform auth, because this might log the username/password message body
+		v, _ := httputil.DumpRequestOut(req, true)
+		glog.Info(string(v))
 	}
 
 	// this should be the normal code
 	//	resp,err := http.DefaultClient.Do(req)	// execute the call
 
-	// instead, we have this which tolerates bad certs
+	// instead, we have this which tolerates bad certs [fixme both here and in CredsLogin]
 	tlscfg := &tls.Config{InsecureSkipVerify: true} // true means to skip the verification
 	transp := &http.Transport{TLSClientConfig: tlscfg}
 	client := &http.Client{Transport: transp}
@@ -301,22 +152,20 @@ func invokeHTTP(method, server, uri string, creds *Credentials, body io.Reader, 
 	}
 
 	if err != nil { // failed HTTP call
-		return makeError("HTTP call failed", HTTP_ERROR_CLIENT, err) // chain the err
+		return HTTP_ERROR_CLIENT, err
 	}
 
-	if resp.StatusCode == 401 { // Unauthorized.  Not a failure yet, perhaps we can reauth
-
-		// nyi where to store auth server/uri?   In the creds object ?
-		ReauthCredentials(creds, "api.ctl.io", "/v2/authentication/login")
+	if resp.StatusCode == 401 { // Unauthorized.  Not a failure yet, perhaps we can reauth.  This is why we need a whole Credentials and not just the token
+		
+		creds.CredsReauth()
 		if creds.IsValid() {
 			req.Header.Del("Authorization")
-			req.Header.Add("Authorization", ("Bearer " + creds.BearerToken))
-
+			creds.AddAuthHeader(req)
 			resp, err = client.Do(req) // not :=
 		}
 	}
 
-	if (resp.StatusCode < 200) || (resp.StatusCode >= 300) { // Q: do we care to distinguish the various 200-series codes?
+	if !isSuccess(resp.StatusCode) {
 		// stat := fmt.Sprintf("received HTTP response code %d\n", resp.StatusCode)
 
 		if !bDebugRequests {
@@ -330,16 +179,20 @@ func invokeHTTP(method, server, uri string, creds *Credentials, body io.Reader, 
 			glog.Info(string(vv))
 		}
 
-		return makeError("HTTP call failed", resp.StatusCode, nil)
+		return resp.StatusCode, clcError(fmt.Sprintf("HTTP call failed, status=%d", resp.StatusCode))
 	}
 
 	if ret != nil { // permit methods without a response body, or calls that ignore the body and just look for status
 		err = json.NewDecoder(resp.Body).Decode(ret)
 
-		if err != nil {
-			return makeError("JSON decode failed", HTTP_ERROR_JSON, err)
+		if err != nil {	// status is a 200-series success code, because HTTP returned a proper payload.  We just couldn't interpret it.
+			return resp.StatusCode, clcError(fmt.Sprintf("JSON decode failed: err=%s", err))
 		}
 	}
 
-	return nil // success
+	return resp.StatusCode, nil // success
+}
+
+func isSuccess(httpStatus int) bool {
+	return (httpStatus >= 200) && (httpStatus <= 299)
 }

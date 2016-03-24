@@ -15,5 +15,5 @@ limitations under the License.
 */
 
 // Package clc is an implementation of Interface, LoadBalancer
-// and Instances for CenturyLinkCloud
+// and Zones for CenturyLinkCloud
 package clc
