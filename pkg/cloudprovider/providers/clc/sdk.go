@@ -34,22 +34,22 @@ type PoolDetails struct {
 	IncomingPort int    // docs say 'the port on which incoming traffic will send requests', believed to mean 'where the LB is listening on the outside'
 	Method       string // one of: 'roundrobin', 'leastconn'   Q: how to declare suitable constants for those
 	Health       string // JSON object, as {unhealthyThreshold:2, healthyThreshold:2, intervalSeconds:5, targetPort:80}
-	Persistence string // e.g. 'none'
-	TimeoutMS   int64
-	Mode        string // one of: 'tcp', 'http'
+	Persistence  string // e.g. 'none'
+	TimeoutMS    int64
+	Mode         string // one of: 'tcp', 'http'
 
 	Nodes []PoolNode
 }
 
 type PoolCreationInfo struct {
-	DataCenter string
-	LBID string
-	PoolID string
+	DataCenter  string
+	LBID        string
+	PoolID      string
 	RequestTime int64
 }
 
 type LoadBalancerCreationInfo struct {
-	DataCenter string
+	DataCenter  string
 	LBID        string // the ID should be enough.  This is only a struct so that we have a place to put new fields later if desired
 	RequestTime int64  // per the server-side clock, whose synchronization with any other clock is unknown
 }
@@ -73,7 +73,7 @@ type LoadBalancerSummary struct {
 }
 
 type CenturyLinkClient interface {
-	GetCreds() Credentials 	// delegate auth interface 
+	GetCreds() Credentials // delegate auth interface
 
 	// datacenter identification
 	listAllDC() ([]DataCenterName, error)
@@ -86,11 +86,10 @@ type CenturyLinkClient interface {
 
 	inspectPool(dc, lbid, poolid string) (*PoolDetails, error)
 	createPool(dc, lbid string, newpool *PoolDetails) (*PoolCreationInfo, error) // send in newpool.PoolID=nil, the return will have it filled in
-	updatePool(dc, lbid string, newpool *PoolDetails) (*PoolDetails, error) // send in newpool.PoolID, that's the pool whose details to update
+	updatePool(dc, lbid string, newpool *PoolDetails) (*PoolDetails, error)      // send in newpool.PoolID, that's the pool whose details to update
 	deletePool(dc, lbid string, poolID string) error
 }
 
 func makeCenturyLinkClient() CenturyLinkClient {
-	return implMakeCLC();	// no creds, useless until auth is done, but never fails
+	return implMakeCLC() // no creds, useless until auth is done, but never fails
 }
-
