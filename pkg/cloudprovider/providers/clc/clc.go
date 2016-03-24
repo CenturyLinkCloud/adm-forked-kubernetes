@@ -39,8 +39,8 @@ const (
 // CLCCloud is an implementation of Interface, LoadBalancer and Instances for CenturyLinkCloud.
 type CLCCloud struct {
 	clcClient CenturyLinkClient
-	clcLB     *clcProviderLB    // cloudprovider's LoadBalancer interface is implemented here
-	clcConfig Config            // loaded in readConfig
+	clcLB     *clcProviderLB // cloudprovider's LoadBalancer interface is implemented here
+	clcConfig Config         // loaded in readConfig
 }
 
 func init() {
@@ -55,14 +55,18 @@ func init() {
 
 		newClient := makeCenturyLinkClient()
 
-		newCloud := CLCCloud {
+		newCloud := CLCCloud{
 			clcClient: newClient,
-			clcLB: makeProviderLB(newClient),
+			clcLB:     makeProviderLB(newClient),
 			clcConfig: cfg,
 		}
 
-		newClient.GetCreds().CredsLogin(cfg.Global.Username, cfg.Global.Password)	// try the login, but accept that it may fail
-		return &newCloud,nil
+		newClient.GetCreds().CredsLogin(cfg.Global.Username, cfg.Global.Password) // try the login, but accept that it may fail
+		if !newCloud.clcLB.clcClient.GetCreds().IsValid() {
+			glog.Info("CLC: initial login is not valid, either it failed or was aliased")
+		}
+
+		return &newCloud, nil
 	})
 }
 
@@ -98,20 +102,6 @@ func readConfig(config io.Reader) (Config, error) {
 
 	cfg.Global.Password = string(password)
 	return cfg, err
-}
-
-// Consider: either merge this code up into init, or extract the func declared there into a named fn
-func newCLCCloud(cfg Config) (*CLCCloud, error) {
-	newClient := makeCenturyLinkClient()
-
-	newCloud := CLCCloud {
-		clcClient: newClient,
-		clcLB: makeProviderLB(newClient),
-		clcConfig: cfg,
-	}
-
-	newClient.GetCreds().CredsLogin(cfg.Global.Username, cfg.Global.Password)	// try the login, but accept that it may fail
-	return &newCloud, nil
 }
 
 // LoadBalancer returns a balancer interface. Also returns true if the interface is supported, false otherwise.

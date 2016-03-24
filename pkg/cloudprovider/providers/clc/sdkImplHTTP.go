@@ -32,7 +32,7 @@ import (
 //// requests honor this state, no need to pass in with every call
 var bCloseConnections = true
 var bDebugRequests = true
-var bDebugResponses = true	// turn these back off after exploring whether healthCheck works correctly
+var bDebugResponses = true // turn these back off after exploring whether healthCheck works correctly
 
 func SetCloseConnectionMode(b bool) {
 	bCloseConnections = b
@@ -94,7 +94,6 @@ func simplePOST(server, uri string, creds Credentials, body string, ret interfac
 	return invokeHTTP("POST", server, uri, creds, b, ret)
 }
 
-
 // method to be "GET", "POST", etc.
 // server name "api.ctl.io" or "api.loadbalancer.ctl.io"
 // uri always starts with /   (we assemble https://<server><uri>)
@@ -131,7 +130,7 @@ func invokeHTTP(method, server, uri string, creds Credentials, body io.Reader, r
 		req.Header.Add("Connection", "close")
 	}
 
-	if bDebugRequests {		// do not call invokeHTTP to perform auth, because this might log the username/password message body
+	if bDebugRequests { // do not call invokeHTTP to perform auth, because this might log the username/password message body
 		v, _ := httputil.DumpRequestOut(req, true)
 		glog.Info(string(v))
 	}
@@ -146,6 +145,8 @@ func invokeHTTP(method, server, uri string, creds Credentials, body io.Reader, r
 	resp, err := client.Do(req)
 	// end of tolerating bad certs.  Do not keep this code - it allows MITM etc. attacks
 
+	defer resp.Body.Close() // avoid CLOSE_WAIT state
+
 	if bDebugResponses {
 		vv, _ := httputil.DumpResponse(resp, true)
 		glog.Info(string(vv))
@@ -156,7 +157,7 @@ func invokeHTTP(method, server, uri string, creds Credentials, body io.Reader, r
 	}
 
 	if resp.StatusCode == 401 { // Unauthorized.  Not a failure yet, perhaps we can reauth.  This is why we need a whole Credentials and not just the token
-		
+
 		creds.CredsReauth()
 		if creds.IsValid() {
 			req.Header.Del("Authorization")
@@ -185,7 +186,7 @@ func invokeHTTP(method, server, uri string, creds Credentials, body io.Reader, r
 	if ret != nil { // permit methods without a response body, or calls that ignore the body and just look for status
 		err = json.NewDecoder(resp.Body).Decode(ret)
 
-		if err != nil {	// status is a 200-series success code, because HTTP returned a proper payload.  We just couldn't interpret it.
+		if err != nil { // status is a 200-series success code, because HTTP returned a proper payload.  We just couldn't interpret it.
 			return resp.StatusCode, clcError(fmt.Sprintf("JSON decode failed: err=%s", err))
 		}
 	}

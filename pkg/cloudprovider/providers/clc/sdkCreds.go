@@ -17,13 +17,13 @@ limitations under the License.
 package clc
 
 import (
-	"fmt"
-	"errors"
-	"os"
 	"bytes"
 	tls "crypto/tls"
 	"encoding/json"
+	"errors"
+	"fmt"
 	"net/http"
+	"os"
 
 	"github.com/golang/glog"
 )
@@ -33,18 +33,17 @@ type Credentials interface {
 	GetAccount() string
 	GetLocation() string
 	IsValid() bool
-	CredsLogout(clearUser bool) error 
-	CredsReauth() error 
-	CredsLogin(username string, password string) error 
+	CredsLogout(clearUser bool) error
+	CredsReauth() error
+	CredsLogin(username string, password string) error
 	CredsFromEnv() error
 	AddAuthHeader(req *http.Request)
 }
 
-
 //// Credentials is returned from the login func, and used by everything else
-type implCreds struct {	// implements the Credentials methods
-	AuthServer string 
-	AuthURI string
+type implCreds struct { // implements the Credentials methods
+	AuthServer string
+	AuthURI    string
 
 	Username      string
 	Password      string // kept because we need reauth, especially when a token expires
@@ -54,39 +53,38 @@ type implCreds struct {	// implements the Credentials methods
 }
 
 func MakeEmptyCreds(srv string, uri string) Credentials {
-	return implCreds {
-		AuthServer: srv,
-		AuthURI: uri,
-		Username: "",
-		Password: "",
-		AccountAlias: "",
+	return &implCreds{
+		AuthServer:    srv,
+		AuthURI:       uri,
+		Username:      "",
+		Password:      "",
+		AccountAlias:  "",
 		LocationAlias: "",
-		BearerToken: "",
+		BearerToken:   "",
 	}
 }
 
-func (creds implCreds) GetUsername() string {
+func (creds *implCreds) GetUsername() string {
 	return creds.Username
 }
 
-func (creds implCreds) GetAccount() string {
+func (creds *implCreds) GetAccount() string {
 	return creds.AccountAlias
 }
 
-func (creds implCreds) GetLocation() string {
+func (creds *implCreds) GetLocation() string {
 	return creds.LocationAlias
 }
 
-func (creds implCreds) IsValid() bool {
+func (creds *implCreds) IsValid() bool {
 	return (creds.AccountAlias != "") && (creds.BearerToken != "")
 }
 
-func (creds implCreds) AddAuthHeader(req *http.Request) {
+func (creds *implCreds) AddAuthHeader(req *http.Request) {
 	req.Header.Add("Authorization", ("Bearer " + creds.BearerToken))
 }
 
-	
-func (creds implCreds) CredsLogout(clearUser bool) error {
+func (creds *implCreds) CredsLogout(clearUser bool) error {
 	creds.AccountAlias = ""
 	creds.LocationAlias = ""
 	creds.BearerToken = ""
@@ -96,10 +94,10 @@ func (creds implCreds) CredsLogout(clearUser bool) error {
 		creds.Password = ""
 	}
 
-	return nil	// currently logout involves no outside call. We don't really invalidate the token, we just forget our copy of it
+	return nil // currently logout involves no outside call. We don't really invalidate the token, we just forget our copy of it
 }
 
-func (creds implCreds) CredsReauth() error {
+func (creds *implCreds) CredsReauth() error {
 	user := creds.Username
 	pass := creds.Password
 
@@ -111,7 +109,7 @@ func (creds implCreds) CredsReauth() error {
 	return creds.CredsLogin(user, pass)
 }
 
-func (creds implCreds) CredsFromEnv() error {
+func (creds *implCreds) CredsFromEnv() error {
 	envUsername := os.Getenv("CLC_API_USERNAME")
 	envAccount := os.Getenv("CLC_API_ACCOUNT")
 	envLocation := os.Getenv("CLC_API_LOCATION")
@@ -122,12 +120,12 @@ func (creds implCreds) CredsFromEnv() error {
 		return clcError("cannot auth from env, username missing")
 	}
 
-	if (envAccount == "") || (envToken == "") {  // cannot work as is
-		if envPassword == "" {	
+	if (envAccount == "") || (envToken == "") { // cannot work as is
+		if envPassword == "" {
 			return clcError("cannot auth from env, token and password both missing")
 		}
 
-		return creds.CredsLogin(envUsername, envPassword)	// may or may not work
+		return creds.CredsLogin(envUsername, envPassword) // may or may not work
 	}
 
 	creds.Username = envUsername
@@ -135,7 +133,7 @@ func (creds implCreds) CredsFromEnv() error {
 	creds.AccountAlias = envAccount
 	creds.LocationAlias = envLocation
 	creds.BearerToken = envToken
-	return nil	// no error
+	return nil // no error
 }
 
 type AuthLoginRequestJSON struct { // actually this is unused, as we simply sprintf the string
@@ -152,7 +150,7 @@ type AuthLoginResponseJSON struct {
 }
 
 // overwrites all previous creds info, including username
-func (creds implCreds) CredsLogin(username string, password string) error {
+func (creds *implCreds) CredsLogin(username string, password string) error {
 	e := creds.CredsLogout(true)
 	if e != nil {
 		return e
@@ -177,7 +175,7 @@ func (creds implCreds) CredsLogin(username string, password string) error {
 	}
 
 	req.Header.Add("Content-Type", "application/json") // incoming body to be a marshaled object already
-	req.Header.Add("Host", creds.AuthServer) // the reason we take server and uri separately
+	req.Header.Add("Host", creds.AuthServer)           // the reason we take server and uri separately
 	req.Header.Add("Accept", "application/json")
 	// do not send Authorization - we are asking to become authorized
 	req.Header.Add("Connection", "close")
@@ -203,7 +201,7 @@ func (creds implCreds) CredsLogin(username string, password string) error {
 	err = json.NewDecoder(resp.Body).Decode(&authresp)
 	if err != nil {
 		return clcError(fmt.Sprintf("JSON decode failed, err=%s", err.Error()))
-	}	// otherwise we now have an auth response in authresp
+	} // otherwise we now have an auth response in authresp
 
 	glog.Info(fmt.Sprintf("assigning new token, do this:  export CLC_API_TOKEN=%s\n", authresp.BearerToken))
 	glog.Info(fmt.Sprintf("also CLC_API_USERNAME=%s  CLC_API_ACCOUNT=%s  CLC_API_LOCATION=%s\n", authresp.Username, authresp.AccountAlias, authresp.LocationAlias))
@@ -214,11 +212,11 @@ func (creds implCreds) CredsLogin(username string, password string) error {
 	creds.LocationAlias = authresp.LocationAlias
 	creds.BearerToken = authresp.BearerToken
 
-	return nil;	// no error
+	return nil // no error
 }
 
 // whole clc package uses this, it's just here in creds because this is the bottom of the dependency stack
-func clcError(content string) error {	// caller probably to use fmt.Sprintf to make the input string
+func clcError(content string) error { // caller probably to use fmt.Sprintf to make the input string
 	if content == "" {
 		content = "<error text not available>"
 	}
@@ -228,4 +226,3 @@ func clcError(content string) error {	// caller probably to use fmt.Sprintf to m
 	glog.Info(full_err)
 	return errors.New(full_err)
 }
-

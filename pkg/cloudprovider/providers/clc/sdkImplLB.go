@@ -27,22 +27,20 @@ var clcServer_LB_BETA string = "api.loadbalancer.ctl.io" // URL form  https://ap
 
 //// auth methods
 func implMakeCLC() CenturyLinkClient {
-	return clcImpl {
+	return clcImpl{
 		creds: MakeEmptyCreds(clcServer_API_V2, "/v2/authentication/login"),
 	}
 }
 
-
 //// clcImpl is the internal layer that knows what HTTP calls to make
 
 type clcImpl struct { // implements CenturyLinkClient
-	creds Credentials		// make it once, never reassign it
+	creds Credentials // make it once, never reassign it
 }
 
 func (clc clcImpl) GetCreds() Credentials {
 	return clc.creds
 }
-
 
 //////////////// clc method: listAllDC()
 
@@ -56,7 +54,7 @@ func (clc clcImpl) listAllDC() ([]DataCenterName, error) {
 	uri := fmt.Sprintf("/v2/datacenters/%s", clc.creds.GetAccount())
 	dcret := make([]*dcNamesJSON, 0)
 
-	_,err := simpleGET(clcServer_API_V2, uri, clc.creds, &dcret)
+	_, err := simpleGET(clcServer_API_V2, uri, clc.creds, &dcret)
 	if err != nil {
 		return nil, err
 	}
@@ -93,7 +91,7 @@ func (clc clcImpl) listAllLB() ([]LoadBalancerSummary, error) {
 	uri := fmt.Sprintf("/%s/loadbalancers", clc.creds.GetAccount())
 	apiret := &lbListingWrapperJSON{}
 
-	_,err := simpleGET(clcServer_LB_BETA, uri, clc.creds, &apiret)
+	_, err := simpleGET(clcServer_LB_BETA, uri, clc.creds, &apiret)
 	if err != nil {
 		return nil, err
 	}
@@ -138,14 +136,14 @@ func (clc clcImpl) createLB(dc string, lbname string, desc string) (*LoadBalance
 
 	body := fmt.Sprintf("{ \"name\":\"%s\", \"description\":\"%s\" }", lbname, desc)
 
-	_,err := simplePOST(clcServer_LB_BETA, uri, clc.creds, body, apiret)
+	_, err := simplePOST(clcServer_LB_BETA, uri, clc.creds, body, apiret)
 
 	if err != nil {
 		return nil, err
 	}
 
 	return &LoadBalancerCreationInfo{
-		DataCenter: dc,
+		DataCenter:  dc,
 		LBID:        findLinkLB(&apiret.Links, "loadbalancer"),
 		RequestTime: apiret.RequestDate,
 	}, nil
@@ -161,14 +159,14 @@ type NodeJSON struct {
 type ApiNodes []NodeJSON
 
 type PoolJSON struct {
-	PoolID       string `json:"id"`
-	IncomingPort int    `json:"port"`
-	Method       string `json:"loadBalancingMethod"`
-	Persistence  string `json:"persistence"`
-	TimeoutMS    int64  `json:"idleTimeout"`
-	Mode         string `json:"loadBalancingMode"`
-	Health       string `json:"healthCheck"`
-	Nodes ApiNodes `json:"nodes"`
+	PoolID       string   `json:"id"`
+	IncomingPort int      `json:"port"`
+	Method       string   `json:"loadBalancingMethod"`
+	Persistence  string   `json:"persistence"`
+	TimeoutMS    int64    `json:"idleTimeout"`
+	Mode         string   `json:"loadBalancingMode"`
+	Health       string   `json:"healthCheck"`
+	Nodes        ApiNodes `json:"nodes"`
 }
 
 type ApiPools []PoolJSON
@@ -188,7 +186,7 @@ func (clc clcImpl) inspectLB(dc, lbid string) (*LoadBalancerDetails, error) {
 	uri := fmt.Sprintf("/%s/%s/loadbalancers/%s", clc.creds.GetAccount(), dc, lbid)
 	apiret := &lbDetailsJSON{}
 
-	_,err := simpleGET(clcServer_LB_BETA, uri, clc.creds, apiret)
+	_, err := simpleGET(clcServer_LB_BETA, uri, clc.creds, apiret)
 	if err != nil {
 		return nil, err
 	}
@@ -276,7 +274,7 @@ func (clc clcImpl) deleteLB(dc, lbid string) (bool, error) {
 		return false, nil // err=nil is what designates success, boolean return is how we got there
 	}
 
-	return false, err  // bool return is meaningless, we may or may not have the LB
+	return false, err // bool return is meaningless, we may or may not have the LB
 }
 
 //////////////// clc method: createPool()
@@ -337,7 +335,7 @@ func (clc clcImpl) createPool(dc, lbid string, newpool *PoolDetails) (*PoolCreat
 	pool_req := pool_to_json(newpool)
 
 	pool_resp := &CreatePoolResponseJSON{}
-	_,err := marshalledPOST(clcServer_LB_BETA, uri, clc.creds, pool_req, pool_resp)
+	_, err := marshalledPOST(clcServer_LB_BETA, uri, clc.creds, pool_req, pool_resp)
 	if err != nil {
 		return nil, err
 	}
@@ -348,14 +346,13 @@ func (clc clcImpl) createPool(dc, lbid string, newpool *PoolDetails) (*PoolCreat
 	}
 
 	// but clc.inspectPool fails if executed this quickly.  Return a PoolCreationInfo instead
-	return &PoolCreationInfo {
-		DataCenter: dc,
-		LBID: lbid,
-		PoolID: poolID,
+	return &PoolCreationInfo{
+		DataCenter:  dc,
+		LBID:        lbid,
+		PoolID:      poolID,
 		RequestTime: pool_resp.RequestDate,
 	}, nil
 }
-
 
 //////////////// clc method: updatePool()
 func (clc clcImpl) updatePool(dc, lbid string, newpool *PoolDetails) (*PoolDetails, error) {
@@ -364,7 +361,7 @@ func (clc clcImpl) updatePool(dc, lbid string, newpool *PoolDetails) (*PoolDetai
 		dc, lbid, newpool.PoolID)
 
 	update_req := pool_to_json(newpool) // and ignore async-request return object
-	_,err := marshalledPUT(clcServer_LB_BETA, uri, clc.creds, update_req, nil)
+	_, err := marshalledPUT(clcServer_LB_BETA, uri, clc.creds, update_req, nil)
 	if err != nil {
 		return nil, err
 	}

@@ -108,7 +108,7 @@ func (clc *clcProviderLB) EnsureLoadBalancer(name, region string,
 
 	if lb == nil { // make a new LB
 		glog.Info(fmt.Sprintf("CLC.EnsureLoadBalancer: creating LB, dc=%s, name=%s", region, name))
-		inf, e := clc.clcClient.createLB(region, K8S_LB_PREFIX + name, serviceName.String())
+		inf, e := clc.clcClient.createLB(region, K8S_LB_PREFIX+name, serviceName.String())
 		if e != nil {
 			glog.Info("CLC.EnsureLoadBalancer: failed to create new LB: err=%s", e.Error())
 			return nil, e
@@ -231,7 +231,7 @@ func makePoolDetailsFromServicePort(lbid string, srcPort *api.ServicePort, hosts
 		Persistence:  persist,
 		TimeoutMS:    99999, // and what should the default be?
 		Mode:         "tcp",
-		Health:  fmt.Sprintf("{unhealthyThreshold:%d, healthyThreshold:%d, intervalSeconds:%d, targetPort:%d}", 2, 2, 5, srcPort.Port),
+		Health:       fmt.Sprintf("{unhealthyThreshold:%d, healthyThreshold:%d, intervalSeconds:%d, targetPort:%d}", 2, 2, 5, srcPort.Port),
 		Nodes:        makeNodeListFromHosts(hosts, srcPort.NodePort),
 	}
 }
