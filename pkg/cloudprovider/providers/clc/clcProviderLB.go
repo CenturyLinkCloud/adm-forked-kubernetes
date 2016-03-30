@@ -231,7 +231,7 @@ func makePoolDetailsFromServicePort(lbid string, srcPort *api.ServicePort, hosts
 		Persistence:  persist,
 		TimeoutMS:    99999, // and what should the default be?
 		Mode:         "tcp",
-		Health:       fmt.Sprintf("{unhealthyThreshold:%d, healthyThreshold:%d, intervalSeconds:%d, targetPort:%d}", 2, 2, 5, srcPort.Port),
+		Health:       &HealthCheck { UnhealthyThreshold:2, HealthyThreshold:2, IntervalSeconds:5, TargetPort:srcPort.Port , Mode:"TCP" },
 		Nodes:        makeNodeListFromHosts(hosts, srcPort.NodePort),
 	}
 }
