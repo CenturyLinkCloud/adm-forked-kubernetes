@@ -165,7 +165,7 @@ type PoolJSON struct {
 	Persistence  string   `json:"persistence"`
 	TimeoutMS    int64    `json:"idleTimeout"`
 	Mode         string   `json:"loadBalancingMode"`
-	Health       string   `json:"healthCheck"`
+	Health       *HealthCheckJSON   `json:"healthCheck,omitempty"`
 	Nodes        ApiNodes `json:"nodes"`
 }
 
@@ -217,6 +217,7 @@ func (clc clcImpl) inspectLB(dc, lbid string) (*LoadBalancerDetails, error) {
 				LBID:         apiret.LBID,
 				IncomingPort: srcpool.IncomingPort,
 				Method:       srcpool.Method,
+				Health:       nil,	// nyi load this
 				Persistence:  srcpool.Persistence,
 				TimeoutMS:    srcpool.TimeoutMS,
 				Mode:         srcpool.Mode,
@@ -284,14 +285,38 @@ type NodeEntityJSON struct {
 	TargetPort int    `json:"privatePort"`
 }
 
+
+type HealthCheckJSON struct {
+	UnhealthyThreshold int `json:"unhealthyThreshold"`
+	HealthyThreshold   int `json:"healthyThreshold"`
+	IntervalSeconds    int `json:"intervalSeconds"`
+	TargetPort         int `json:"targetPort"`
+	Mode               string `json:"mode,omitempty"`
+}
+
 type PoolEntityJSON struct {
 	PoolID       string           `json:"id,omitempty"` // createPool doesn't want to send an id
 	IncomingPort int              `json:"port"`
 	Method       string           `json:"loadBalancingMethod"`
+	Health       *HealthCheckJSON  `json:"healthCheck,omitEmpty"`
 	Persistence  string           `json:"persistence"`
 	TimeoutMS    int64            `json:"idleTimeout"`
 	Mode         string           `json:"loadBalancingMode"`
 	Nodes        []NodeEntityJSON `json:"nodes"`
+}
+
+func health_to_json(src *HealthCheck) *HealthCheckJSON {
+	if src == nil {
+		return nil;
+	}
+
+	return &HealthCheckJSON {
+		UnhealthyThreshold: src.UnhealthyThreshold,
+		HealthyThreshold: src.HealthyThreshold,
+		IntervalSeconds: src.IntervalSeconds,
+		TargetPort: src.TargetPort,
+		Mode: src.Mode,
+	}
 }
 
 func pool_to_json(pool *PoolDetails) *PoolEntityJSON {
@@ -314,6 +339,7 @@ func pool_to_json(pool *PoolDetails) *PoolEntityJSON {
 		PoolID:       pool.PoolID,
 		IncomingPort: pool.IncomingPort,
 		Method:       pool.Method,
+		Health:       health_to_json(pool.Health),
 		Persistence:  pool.Persistence,
 		TimeoutMS:    pool.TimeoutMS,
 		Mode:         pool.Mode,

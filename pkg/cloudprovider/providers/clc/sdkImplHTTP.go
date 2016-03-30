@@ -32,7 +32,7 @@ import (
 //// requests honor this state, no need to pass in with every call
 var bCloseConnections = true
 var bDebugRequests = true
-var bDebugResponses = true // turn these back off after exploring whether healthCheck works correctly
+var bDebugResponses = true
 
 func SetCloseConnectionMode(b bool) {
 	bCloseConnections = b
@@ -131,6 +131,7 @@ func invokeHTTP(method, server, uri string, creds Credentials, body io.Reader, r
 	}
 
 	if bDebugRequests { // do not call invokeHTTP to perform auth, because this might log the username/password message body
+		glog.Info("---- initiating SDK HTTP request ----")
 		v, _ := httputil.DumpRequestOut(req, true)
 		glog.Info(string(v))
 	}
