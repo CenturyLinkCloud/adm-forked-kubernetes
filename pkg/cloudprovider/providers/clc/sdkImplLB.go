@@ -19,6 +19,9 @@ package clc
 import (
 	"fmt"
 	"strings"
+	"time"
+
+	"github.com/golang/glog"
 )
 
 //// api use involves calls to both addresses
@@ -129,14 +132,14 @@ type lbCreateRequestJSON struct {
 	Links          ApiLinks `json:"links"`
 }
 
-func (clc clcImpl) createLB(dc string, lbname string, desc string) (*LoadBalancerCreationInfo, error) {
+func rawCreateLB(clcCreds Credentials, dc string, lbname string, desc string) (*LoadBalancerCreationInfo, error) {
 
-	uri := fmt.Sprintf("/%s/%s/loadbalancers", clc.creds.GetAccount(), dc)
+	uri := fmt.Sprintf("/%s/%s/loadbalancers", clcCreds.GetAccount(), dc)
 	apiret := &lbCreateRequestJSON{}
 
 	body := fmt.Sprintf("{ \"name\":\"%s\", \"description\":\"%s\" }", lbname, desc)
 
-	_, err := simplePOST(clcServer_LB_BETA, uri, clc.creds, body, apiret)
+	_, err := simplePOST(clcServer_LB_BETA, uri, clcCreds, body, apiret)
 
 	if err != nil {
 		return nil, err
@@ -147,6 +150,35 @@ func (clc clcImpl) createLB(dc string, lbname string, desc string) (*LoadBalance
 		LBID:        findLinkLB(&apiret.Links, "loadbalancer"),
 		RequestTime: apiret.RequestDate,
 	}, nil
+}
+
+func (clc clcImpl) createLB(dc string, lbname string, desc string) (*LoadBalancerCreationInfo, error) {
+	timeStarted := time.Now()
+	LB, err := rawCreateLB(clc.creds, dc, lbname, desc)
+	if err != nil {
+		return nil, err
+	}
+
+	deadline := time.Now().Add(2 * time.Minute)
+	for {	// infinite loop.  Wait until the newly created LB actually appears in the list.
+		time.Sleep(2 * time.Second)
+
+		list, listErr := clc.listAllLB()
+		if listErr != nil {
+			continue
+		}
+
+		for _,entry := range list {
+			if (entry.DataCenter == dc) && (entry.LBID == LB.LBID) { // success
+				glog.Info(fmt.Sprintf("createLB complete, duration=%d seconds", (time.Now().Sub(timeStarted)/time.Second)))
+				return LB, nil
+			}
+		}
+
+		if deadline.Before(time.Now()) {
+			return nil, fmt.Errorf(fmt.Sprintf("createLB timed out, LBID=%s", LB.LBID))
+		}
+	}
 }
 
 //////////////// clc method: inspectLB()
@@ -212,12 +244,23 @@ func (clc clcImpl) inspectLB(dc, lbid string) (*LoadBalancerDetails, error) {
 				json_nodes = make([]PoolNode, 0, 0)
 			}
 
+			var pool_health *HealthCheck = nil
+			if srcpool.Health != nil {
+				pool_health = &HealthCheck {
+					UnhealthyThreshold: srcpool.Health.UnhealthyThreshold,
+					HealthyThreshold: srcpool.Health.HealthyThreshold,
+					IntervalSeconds: srcpool.Health.IntervalSeconds,
+					TargetPort: srcpool.Health.TargetPort,
+					Mode: srcpool.Health.Mode,
+				} 
+			}
+
 			json_pools[idx] = PoolDetails{
 				PoolID:       srcpool.PoolID,
 				LBID:         apiret.LBID,
 				IncomingPort: srcpool.IncomingPort,
 				Method:       srcpool.Method,
-				Health:       nil,	// nyi load this
+				Health:       pool_health,
 				Persistence:  srcpool.Persistence,
 				TimeoutMS:    srcpool.TimeoutMS,
 				Mode:         srcpool.Mode,
