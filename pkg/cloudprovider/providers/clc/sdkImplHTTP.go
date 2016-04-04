@@ -18,7 +18,10 @@ package clc
 
 import (
 	"bytes"
-	tls "crypto/tls"
+
+	// put this back if cert checking is to be disabled again
+	// tls "crypto/tls"
+
 	"encoding/json"
 
 	"fmt"
@@ -137,13 +140,13 @@ func invokeHTTP(method, server, uri string, creds Credentials, body io.Reader, r
 	}
 
 	// this should be the normal code
-	//	resp,err := http.DefaultClient.Do(req)	// execute the call
+	resp,err := http.DefaultClient.Do(req)	// execute the call
 
 	// instead, we have this which tolerates bad certs [fixme both here and in CredsLogin]
-	tlscfg := &tls.Config{InsecureSkipVerify: true} // true means to skip the verification
-	transp := &http.Transport{TLSClientConfig: tlscfg}
-	client := &http.Client{Transport: transp}
-	resp, err := client.Do(req)
+	// tlscfg := &tls.Config{InsecureSkipVerify: true} // true means to skip the verification
+	// transp := &http.Transport{TLSClientConfig: tlscfg}
+	// client := &http.Client{Transport: transp}
+	// resp, err := client.Do(req)
 	// end of tolerating bad certs.  Do not keep this code - it allows MITM etc. attacks
 
 	defer resp.Body.Close() // avoid CLOSE_WAIT state
@@ -163,7 +166,7 @@ func invokeHTTP(method, server, uri string, creds Credentials, body io.Reader, r
 		if creds.IsValid() {
 			req.Header.Del("Authorization")
 			creds.AddAuthHeader(req)
-			resp, err = client.Do(req) // not :=
+			resp, err = http.DefaultClient.Do(req) // not :=
 		}
 	}
 
