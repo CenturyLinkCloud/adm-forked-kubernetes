@@ -20,12 +20,11 @@ import (
 	"errors"
 	"fmt"
 	"io"
-	"net"
 
 	"encoding/base64"
 
 	"github.com/golang/glog"
-	"github.com/scalingdata/gcfg"
+	"gopkg.in/gcfg.v1"
 	"k8s.io/kubernetes/pkg/api"
 	"k8s.io/kubernetes/pkg/cloudprovider"
 	"k8s.io/kubernetes/pkg/types"
@@ -198,27 +197,53 @@ func (clc *CLCCloud) CurrentNodeName(hostname string) (string, error) {
 	return "", errors.New("unsupported method")
 }
 
-//////////////// Kubernetes LoadBalancer interface: Get, Ensure, Update, EnsureDeleted
-func (clc *CLCCloud) GetLoadBalancer(name, region string) (status *api.LoadBalancerStatus, exists bool, err error) {
-	return clc.clcLB.GetLoadBalancer(name, region)
+// GetLoadBalancer is an implementation of LoadBalancer.GetLoadBalancer
+func (clc *CLCCloud) GetLoadBalancer(service *api.Service) (*api.LoadBalancerStatus, bool, error) {
+	loadBalancerName := cloudprovider.GetLoadBalancerName(service)
+	zone, err := clc.GetZone()
+	if err != nil {
+		return nil, false, err
+	}
+	return clc.clcLB.GetLoadBalancer(loadBalancerName, zone.Region)
 }
 
-func (clc *CLCCloud) EnsureLoadBalancer(name, region string, loadBalancerIP net.IP,
-	ports []*api.ServicePort, hosts []string, serviceName types.NamespacedName,
-	affinityType api.ServiceAffinity, annotations cloudprovider.ServiceAnnotation) (*api.LoadBalancerStatus, error) {
+// EnsureLoadBalancer creates a new load balancer 'name', or updates the existing one. Returns the status of the balancer
+func (clc *CLCCloud) EnsureLoadBalancer(service *api.Service, hosts []string, annotations map[string]string) (*api.LoadBalancerStatus, error) {
+	loadBalancerName := cloudprovider.GetLoadBalancerName(service)
+	loadBalancerIP := service.Spec.LoadBalancerIP
+	ports := service.Spec.Ports
 
-	return clc.clcLB.EnsureLoadBalancer(name, region, loadBalancerIP, ports, hosts, serviceName, affinityType, annotations)
+	zone, err := clc.GetZone()
+	if err != nil {
+		return nil, err
+	}
+	affinityType := service.Spec.SessionAffinity
+
+	serviceName := types.NamespacedName{Namespace: service.Namespace, Name: service.Name}
+
+	return clc.clcLB.EnsureLoadBalancer(loadBalancerName, zone.Region, loadBalancerIP, ports, hosts, serviceName, affinityType, annotations)
 }
 
-func (clc *CLCCloud) UpdateLoadBalancer(name, region string, hosts []string) error {
-	return clc.clcLB.UpdateLoadBalancer(name, region, hosts)
+// UpdateLoadBalancer is an implementation of LoadBalancer.UpdateLoadBalancer.
+func (clc *CLCCloud) UpdateLoadBalancer(service *api.Service, hostNames []string) error {
+	loadBalancerName := cloudprovider.GetLoadBalancerName(service)
+	zone, err := clc.GetZone()
+	if err != nil {
+		return err
+	}
+	return clc.clcLB.UpdateLoadBalancer(loadBalancerName, zone.Region, hostNames)
 }
 
-func (clc *CLCCloud) EnsureLoadBalancerDeleted(name, region string) error {
-	return clc.clcLB.EnsureLoadBalancerDeleted(name, region)
+// EnsureLoadBalancerDeleted is an implementation of LoadBalancer.EnsureLoadBalancerDeleted.
+func (clc *CLCCloud) EnsureLoadBalancerDeleted(service *api.Service) error {
+	loadBalancerName := cloudprovider.GetLoadBalancerName(service)
+	zone, err := clc.GetZone()
+	if err != nil {
+		return err
+	}
+	glog.V(2).Infof("EnsureLoadBalancerDeleted(%v, %v, %v, %v)", service.Namespace, service.Name, loadBalancerName, zone.Region)
+	return clc.clcLB.EnsureLoadBalancerDeleted(loadBalancerName, zone.Region)
 }
-
-//////////////// Kubernetes Zones interface is just this one method
 
 // GetZone returns the Zone containing the current failure zone and locality region that the program is running in
 func (clc *CLCCloud) GetZone() (cloudprovider.Zone, error) {
@@ -227,8 +252,6 @@ func (clc *CLCCloud) GetZone() (cloudprovider.Zone, error) {
 		Region:        clc.clcConfig.Global.Datacenter,
 	}, nil
 }
-
-////////////////
 
 // ListRoutes lists all managed routes that belong to the specified clusterName
 func (clc *CLCCloud) ListRoutes(clusterName string) ([]*cloudprovider.Route, error) {
